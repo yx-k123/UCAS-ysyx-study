@@ -89,12 +89,23 @@ static int cmd_x(char *args) {
     return 0;
   }
 
+  /* 如果只给了一个表达式，按地址递增读取；如果给了多个地址，则逐个读取 */
+  char *cur = expr;
+  unsigned long base = strtoul(cur, NULL, 0);
+  char *next_token = strtok(NULL, " ");
+
   for (int i = 0; i < n; i ++) {
-    word_t addr = 0;
-    sscanf(expr, "%x", &addr);
-    // word_t addr = expr_eval(expr);
+    word_t addr;
+    if (next_token) {
+      addr = (word_t)strtoul(cur, NULL, 0);
+      /* advance to next token for next iteration */
+      cur = next_token;
+      next_token = strtok(NULL, " ");
+    } else {
+      /* only one address provided: use base + i*4 */
+      addr = (word_t)(base + (unsigned long)i * 4UL);
+    }
     printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, 4));
-    expr += strlen(expr) + 1;
   }
 
   return 0;
