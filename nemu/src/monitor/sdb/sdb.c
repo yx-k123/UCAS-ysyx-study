@@ -17,6 +17,7 @@
 #include <cpu/cpu.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <memory/paddr.h>
 #include "sdb.h"
 
 static int is_batch_mode = false;
@@ -74,6 +75,31 @@ static int cmd_info(char *args) {
   return 0;
 }
 
+static int cmd_x(char *args) {
+  if (args == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+
+  int n = atoi(strtok(args, " "));
+  char *expr = strtok(NULL, " ");
+
+  if (expr == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+
+  for (int i = 0; i < n; i ++) {
+    word_t addr = 0;
+    sscanf(expr, "%x", &addr);
+    // word_t addr = expr_eval(expr);
+    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, 4));
+    expr += strlen(expr) + 1;
+  }
+
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -86,6 +112,7 @@ static struct {
   { "q", "Exit NEMU", cmd_q },
   { "si", "Step into instruction, default steps = 1", cmd_si },
   { "info", "Display information about registers or watchpoints", cmd_info },
+  { "x", "Examine memory", cmd_x },
 };
 
 #define NR_CMD ARRLEN(cmd_table)
