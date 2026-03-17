@@ -100,9 +100,21 @@ static bool make_token(char *e) {
          * to record the token in the array `tokens'. For certain types
          * of tokens, some extra actions should be performed.
          */
+        if (nr_token >= 32) {
+          printf("too many tokens\n");
+          return false;
+        }
 
         switch (rules[i].token_type) {
-          default: TODO();
+          case TK_NUM:
+            strncpy(tokens[nr_token].str, substr_start, substr_len);
+            tokens[nr_token].str[substr_len] = '\0';
+            tokens[nr_token].type = TK_NUM;
+            nr_token++;
+            break;
+          default:
+            tokens[nr_token].type = rules[i].token_type;
+            nr_token++;
         }
 
         break;
