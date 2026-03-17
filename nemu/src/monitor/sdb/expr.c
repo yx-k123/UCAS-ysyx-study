@@ -130,6 +130,77 @@ static bool make_token(char *e) {
   return true;
 }
 
+int check_parentheses(int p, int q) {
+  if (tokens[p].type != '(' || tokens[q].type != ')') {
+    return false;
+  }
+
+  int level = 0;
+  for (int i = p + 1; i < q; i ++) {
+    if (tokens[i].type == '(') {
+      level ++;
+    }
+    else if (tokens[i].type == ')') {
+      if (level == 0) {
+        return false;
+      }
+      level --;
+    }
+  }
+
+  return level == 0;
+}
+
+int find_main_operator(int p, int q) {
+  int op = -1;
+  int level = 0;
+
+  for (int i = p; i <= q; i ++) {
+    if (tokens[i].type == '(') {
+      level ++;
+    }
+    else if (tokens[i].type == ')') {
+      level --;
+    }
+    else if (level == 0) {
+      if (tokens[i].type == '+' || tokens[i].type == '-') {
+        op = i;
+      }
+      else if ((tokens[i].type == '*' || tokens[i].type == '/') && op != -1) {
+        op = i;
+      }
+    }
+  }
+
+  return op;
+}
+
+int eval(int p, int q) {
+  if (p > q) {
+    assert(0);
+  }
+  else if (p == q) {
+    return atoi(tokens[p].str);
+  }
+  else if (check_parentheses(p, q) == true) {
+    return eval(p + 1, q - 1);
+  }
+  else {
+    int op = find_main_operator(p, q);
+    int val1 = eval(p, op - 1);
+    int val2 = eval(op + 1, q);
+    int op_type = tokens[op].type;
+
+    switch (op_type) {
+      case '+': return val1 + val2;
+      case '-': return val1 - val2;
+      case '*': return val1 * val2;
+      case '/': return val1 / val2;
+      default: assert(0);
+    }
+  }
+}
+
 
 word_t expr(char *e, bool *success) {
   if (!make_token(e)) {
@@ -138,7 +209,6 @@ word_t expr(char *e, bool *success) {
   }
 
   /* TODO: Insert codes to evaluate the expression. */
-  TODO();
-
-  return 0;
+  *success = true;
+  return eval(0, nr_token - 1);
 }
