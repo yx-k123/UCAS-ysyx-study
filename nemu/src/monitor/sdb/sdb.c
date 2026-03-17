@@ -61,6 +61,19 @@ static int cmd_si(char *args) {
   return 0;
 }
 
+static int cmd_info(char *args) {
+  if (args == NULL) {
+    printf("Usage: info [r|w]\n");
+    return 0;
+  }
+  switch (args[0]) {
+    case 'r': isa_reg_display(); break;
+    // case 'w': wp_display(); break;
+    default: printf("Unknown subcommand '%c'\n", args[0]);
+  }
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -72,7 +85,7 @@ static struct {
   { "c", "Continue the execution of the program", cmd_c },
   { "q", "Exit NEMU", cmd_q },
   { "si", "Step into instruction, default steps = 1", cmd_si },
-  
+  { "info", "Display information about registers or watchpoints", cmd_info },
 };
 
 #define NR_CMD ARRLEN(cmd_table)
