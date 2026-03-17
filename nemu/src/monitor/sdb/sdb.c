@@ -17,6 +17,7 @@
 #include <cpu/cpu.h>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <memory/paddr.h>
 #include "sdb.h"
 
 static int is_batch_mode = false;
@@ -52,6 +53,52 @@ static int cmd_q(char *args) {
   return -1;
 }
 
+static int cmd_si(char *args) {
+  int n = 1;
+  if (args != NULL) {
+    sscanf(args, "%d", &n);
+  }
+  cpu_exec(n);
+  return 0;
+}
+
+static int cmd_info(char *args) {
+  if (args == NULL) {
+    printf("Usage: info [r|w]\n");
+    return 0;
+  }
+  switch (args[0]) {
+    case 'r': isa_reg_display(); break;
+    // case 'w': wp_display(); break;
+    default: printf("Unknown subcommand '%c'\n", args[0]);
+  }
+  return 0;
+}
+
+static int cmd_x(char *args) {
+  if (args == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+
+  int n = atoi(strtok(args, " "));
+  char *expr = strtok(NULL, " ");
+
+  if (expr == NULL) {
+    printf("Usage: x N EXPR\n");
+    return 0;
+  }
+  unsigned long base = strtoul(expr, NULL, 0);
+
+  for (int i = 0; i < n; i ++) {
+    word_t addr;
+    addr = (word_t)(base + (unsigned long)i * 4UL);
+    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, 4));
+  }
+
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -62,9 +109,9 @@ static struct {
   { "help", "Display information about all supported commands", cmd_help },
   { "c", "Continue the execution of the program", cmd_c },
   { "q", "Exit NEMU", cmd_q },
-
-  /* TODO: Add more commands */
-
+  { "si", "Step into instruction, default steps = 1", cmd_si },
+  { "info", "Display information about registers or watchpoints", cmd_info },
+  { "x", "Examine memory", cmd_x },
 };
 
 #define NR_CMD ARRLEN(cmd_table)
