@@ -106,6 +106,9 @@ static bool make_token(char *e) {
         }
 
         switch (rules[i].token_type) {
+          case TK_NOTYPE:
+            /* skip spaces */
+            break;
           case TK_NUM:
             strncpy(tokens[nr_token].str, substr_start, substr_len);
             tokens[nr_token].str[substr_len] = '\0';
@@ -166,8 +169,11 @@ int find_main_operator(int p, int q) {
       if (tokens[i].type == '+' || tokens[i].type == '-') {
         op = i;
       }
-      else if ((tokens[i].type == '*' || tokens[i].type == '/') && op != -1) {
-        op = i;
+      else if (tokens[i].type == '*' || tokens[i].type == '/') {
+        if (op == -1) op = i;
+        else {
+          if (tokens[op].type == '*' || tokens[op].type == '/') op = i;
+        }
       }
     }
   }
