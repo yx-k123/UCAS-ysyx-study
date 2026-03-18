@@ -181,20 +181,20 @@ int find_main_operator(int p, int q) {
   return op;
 }
 
-int eval(int p, int q) {
+word_t eval(int p, int q) {
   if (p > q) {
     assert(0);
   }
   else if (p == q) {
-    return atoi(tokens[p].str);
+    return (word_t)strtoul(tokens[p].str, NULL, 10); 
   }
   else if (check_parentheses(p, q) == true) {
     return eval(p + 1, q - 1);
   }
   else {
     int op = find_main_operator(p, q);
-    int val1 = eval(p, op - 1);
-    int val2 = eval(op + 1, q);
+    word_t val1 = eval(p, op - 1);
+    word_t val2 = eval(op + 1, q);
     int op_type = tokens[op].type;
 
     switch (op_type) {
