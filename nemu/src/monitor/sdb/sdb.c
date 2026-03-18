@@ -69,7 +69,7 @@ static int cmd_info(char *args) {
   }
   switch (args[0]) {
     case 'r': isa_reg_display(); break;
-    // case 'w': wp_display(); break;
+    case 'w': wp_display(); break;
     default: printf("Unknown subcommand '%c'\n", args[0]);
   }
   return 0;
@@ -141,6 +141,23 @@ static int cmd_w(char *args) {
   return 0;
 }
 
+static int cmd_d(char *args) {
+  if (args == NULL) {
+    printf("Usage: d N\n");
+    return 0;
+  }
+
+  int n = atoi(args);
+  
+  if (delete_wp(n)) {
+    printf("Watchpoint %d deleted\n", n);
+  } else {
+    printf("Watchpoint %d is not valid or not found\n", n);
+  }
+
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -156,6 +173,7 @@ static struct {
   { "x", "Examine memory", cmd_x },
   { "p", "Evaluate expression", cmd_p },
   { "w", "Create watchpoint", cmd_w },
+  { "d", "Delete watchpoint", cmd_d },
 };
 
 #define NR_CMD ARRLEN(cmd_table)

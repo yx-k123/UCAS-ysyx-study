@@ -15,10 +15,6 @@
 
 #include "sdb.h"
 
-#define NR_WP 32
-
-
-
 static WP wp_pool[NR_WP] = {};
 static WP *head = NULL, *free_ = NULL;
 
@@ -54,7 +50,63 @@ void free_wp(WP *wp) {
     printf("Invalid watchpoint\n");
     return;
   }
+
+  if (head == wp) {
+    head = wp->next;
+  } else {
+    WP *curr = head;
+    while (curr != NULL && curr->next != wp) {
+      curr = curr->next;
+    }
+    if (curr != NULL) {
+      curr->next = wp->next;
+    }
+  }
+
   wp->valid = 0;
   wp->next = free_;
   free_ = wp;
+}
+
+bool check_watchpoint() {
+  WP *curr = head;
+  bool changed = false;
+  while (curr != NULL) {
+    bool success;
+    word_t new_val = expr(curr->expr, &success);
+    if (success && new_val != curr->value) {
+      printf("Hardware watchpoint %d: %s\n", curr->NO, curr->expr);
+      printf("Old value = " FMT_WORD "\n", curr->value);
+      printf("New value = " FMT_WORD "\n", new_val);
+      curr->value = new_val;
+      changed = true;
+    }
+    curr = curr->next;
+  }
+  return changed;
+}
+
+void wp_display() {
+  if (head == NULL) {
+    printf("No watchpoints.\n");
+    return;
+  }
+  printf("Num\tType\t\tDisp\tEnb\tAddress\t\tWhat\n");
+  WP *curr = head;
+  while (curr != NULL) {
+    printf("%d\twatchpoint\tkeep\ty\t\t\t%s\n", curr->NO, curr->expr);
+    curr = curr->next;
+  }
+}
+
+bool delete_wp(int no) {
+  WP *curr = head;
+  while (curr != NULL) {
+    if (curr->NO == no) {
+      free_wp(curr);
+      return true;
+    }
+    curr = curr->next;
+  }
+  return false;
 }
