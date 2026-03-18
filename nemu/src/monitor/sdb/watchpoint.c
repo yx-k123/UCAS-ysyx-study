@@ -92,7 +92,7 @@ void wp_display() {
     printf("No watchpoints.\n");
     return;
   }
-  printf("Num\tWhat\t\tValue\tHit Count\tExpression\n");
+  printf("Num\tWhat\t\tValue\t\tHit Count\tExpression\n");
   WP *curr = head;
   while (curr != NULL) {
     printf("%d\twatchpoint\t" FMT_WORD "\t%d\t\t%s\n", curr->NO, curr->value, curr->hit_count, curr->expr);
