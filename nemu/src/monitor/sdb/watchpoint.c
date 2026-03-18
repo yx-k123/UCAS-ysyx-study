@@ -91,10 +91,10 @@ void wp_display() {
     printf("No watchpoints.\n");
     return;
   }
-  printf("Num\tType\t\tDisp\tEnb\tAddress\t\tWhat\n");
+  printf("Num\tWhat\tValue\tHit Count\tExpression\n");
   WP *curr = head;
   while (curr != NULL) {
-    printf("%d\twatchpoint\tkeep\ty\t\t\t%s\n", curr->NO, curr->expr);
+    printf("%d\twatchpoint\t" FMT_WORD "\t%d\t\t%s\n", curr->NO, curr->value, curr->hit_count, curr->expr);
     curr = curr->next;
   }
 }
