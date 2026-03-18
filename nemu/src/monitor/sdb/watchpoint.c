@@ -79,6 +79,7 @@ bool check_watchpoint() {
       printf("Old value = " FMT_WORD "\n", curr->value);
       printf("New value = " FMT_WORD "\n", new_val);
       curr->value = new_val;
+      curr->hit_count++;
       changed = true;
     }
     curr = curr->next;
@@ -91,7 +92,7 @@ void wp_display() {
     printf("No watchpoints.\n");
     return;
   }
-  printf("Num\tWhat\tValue\tHit Count\tExpression\n");
+  printf("Num\tWhat\t\tValue\tHit Count\tExpression\n");
   WP *curr = head;
   while (curr != NULL) {
     printf("%d\twatchpoint\t" FMT_WORD "\t%d\t\t%s\n", curr->NO, curr->value, curr->hit_count, curr->expr);
