@@ -19,7 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define TEST_EXPR 1
+#define TEST_EXPR 0
 
 void init_monitor(int, char *[]);
 void am_init_monitor();
