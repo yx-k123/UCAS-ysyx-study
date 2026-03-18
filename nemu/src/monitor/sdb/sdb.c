@@ -83,6 +83,7 @@ static int cmd_x(char *args) {
 
   int n = atoi(strtok(args, " "));
   char *expr_s = strtok(NULL, " ");
+  printf("n = %d, expr = %s\n", n, expr_s);
 
   if (expr_s == NULL) {
     printf("Usage: x N EXPR\n");
