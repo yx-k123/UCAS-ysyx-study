@@ -82,18 +82,22 @@ static int cmd_x(char *args) {
   }
 
   int n = atoi(strtok(args, " "));
-  char *expr = strtok(NULL, " ");
+  char *expr_s = strtok(NULL, " ");
 
-  if (expr == NULL) {
+  if (expr_s == NULL) {
     printf("Usage: x N EXPR\n");
     return 0;
   }
-  unsigned long base = strtoul(expr, NULL, 0);
-
-  for (int i = 0; i < n; i ++) {
-    word_t addr;
-    addr = (word_t)(base + (unsigned long)i * 4UL);
-    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, 4));
+  
+  bool success = false;
+  word_t addr = expr(expr_s, &success);
+  if (!success) {
+    printf("Invalid expression: %s\n", expr_s);
+    return 0;
+  }
+  for (int i = 0; i < n; i++) {
+    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, sizeof(word_t)));
+    addr += sizeof(word_t);
   }
 
   return 0;
