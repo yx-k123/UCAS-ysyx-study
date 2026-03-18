@@ -205,7 +205,7 @@ int find_main_operator(int p, int q) {
   return op;
 }
 
-extern word_t isa_reg_str2val(const char *s, bool *success);
+// extern word_t isa_reg_str2val(const char *s, bool *success);
 
 word_t eval(int p, int q) {
   if (p > q) {
