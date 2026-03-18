@@ -38,6 +38,11 @@ static void trace_and_difftest(Decode *_this, vaddr_t dnpc) {
 #endif
   if (g_print_step) { IFDEF(CONFIG_ITRACE, puts(_this->logbuf)); }
   IFDEF(CONFIG_DIFFTEST, difftest_step(_this->pc, dnpc));
+
+  extern bool check_watchpoint();
+  if (check_watchpoint()) {
+    nemu_state.state = NEMU_STOP;
+  }
 }
 
 static void exec_once(Decode *s, vaddr_t pc) {

@@ -69,7 +69,7 @@ static int cmd_info(char *args) {
   }
   switch (args[0]) {
     case 'r': isa_reg_display(); break;
-    // case 'w': wp_display(); break;
+    case 'w': wp_display(); break;
     default: printf("Unknown subcommand '%c'\n", args[0]);
   }
   return 0;
@@ -82,18 +82,23 @@ static int cmd_x(char *args) {
   }
 
   int n = atoi(strtok(args, " "));
-  char *expr = strtok(NULL, " ");
+  char *expr_s = strtok(NULL, " ");
+  // printf("n = %d, expr = %s\n", n, expr_s);
 
-  if (expr == NULL) {
+  if (expr_s == NULL || n <= 0) {
     printf("Usage: x N EXPR\n");
     return 0;
   }
-  unsigned long base = strtoul(expr, NULL, 0);
-
-  for (int i = 0; i < n; i ++) {
-    word_t addr;
-    addr = (word_t)(base + (unsigned long)i * 4UL);
-    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, 4));
+  
+  bool success = false;
+  word_t addr = expr(expr_s, &success);
+  if (!success) {
+    printf("Invalid expression: %s\n", expr_s);
+    return 0;
+  }
+  for (int i = 0; i < n; i++) {
+    printf(FMT_WORD ": " FMT_WORD "\n", addr, paddr_read(addr, sizeof(word_t)));
+    addr += sizeof(word_t);
   }
 
   return 0;
@@ -117,6 +122,47 @@ static int cmd_p(char *args) {
   return 0;
 }
 
+static int cmd_w(char *args) {
+  if (args == NULL) {
+    printf("Usage: w EXPR\n");
+    return 0;
+  }
+
+  WP *wp = new_wp();
+  if (wp == NULL) {
+    printf("Failed to create watchpoint\n");
+    return 0;
+  }
+  strncpy(wp->expr, args, sizeof(wp->expr) - 1);
+  wp->expr[sizeof(wp->expr) - 1] = '\0';
+  bool success = false;
+  wp->value = expr(args, &success);
+  if (!success) {
+    printf("Invalid expression: %s\n", args);
+    free_wp(wp);
+    return 0;
+  }
+  printf("Watchpoint %d: %s = " FMT_WORD "\n", wp->NO, wp->expr, wp->value);
+  return 0;
+}
+
+static int cmd_d(char *args) {
+  if (args == NULL) {
+    printf("Usage: d N\n");
+    return 0;
+  }
+
+  int n = atoi(args);
+  
+  if (delete_wp(n)) {
+    printf("Watchpoint %d deleted\n", n);
+  } else {
+    printf("Watchpoint %d is not valid or not found\n", n);
+  }
+
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -131,6 +177,8 @@ static struct {
   { "info", "Display information about registers or watchpoints", cmd_info },
   { "x", "Examine memory", cmd_x },
   { "p", "Evaluate expression", cmd_p },
+  { "w", "Create watchpoint", cmd_w },
+  { "d", "Delete watchpoint", cmd_d },
 };
 
 #define NR_CMD ARRLEN(cmd_table)

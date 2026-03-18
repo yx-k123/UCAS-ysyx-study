@@ -21,7 +21,7 @@
 #include <regex.h>
 
 enum {
-  TK_NOTYPE = 256, TK_EQ, TK_NUM,
+  TK_NOTYPE = 256, TK_EQ, TK_NEQ, TK_AND, TK_NUM, TK_HEX, TK_REG, TK_DEREF
 
   /* TODO: Add more token types */
 
@@ -40,7 +40,11 @@ static struct rule {
   {"\\+", '+'},         // plus
   {"-", '-'},          // minus (may be unary or binary)
   {"==", TK_EQ},        // equal
+  {"!=", TK_NEQ},       // not equal
+  {"&&", TK_AND},       // logical and
+  {"0x[0-9a-fA-F]+", TK_HEX},   // hexadecimal number
   {"[0-9]+", TK_NUM},   // decimal number
+  {"\\$[a-zA-Z0-9]+", TK_REG},  // register name
   {"\\*", '*'},       // multiply
   {"/", '/'},           // divide
   {"\\(", '('},       // left paren
@@ -110,9 +114,11 @@ static bool make_token(char *e) {
             /* skip spaces */
             break;
           case TK_NUM:
+          case TK_HEX:
+          case TK_REG:
             strncpy(tokens[nr_token].str, substr_start, substr_len);
             tokens[nr_token].str[substr_len] = '\0';
-            tokens[nr_token].type = TK_NUM;
+            tokens[nr_token].type = rules[i].token_type;
             nr_token++;
             break;
           default:
@@ -154,6 +160,17 @@ int check_parentheses(int p, int q) {
   return level == 0;
 }
 
+int precedence(int type) {
+  switch (type) {
+    case TK_AND: return 1;
+    case TK_EQ: case TK_NEQ: return 2;
+    case '+': case '-': return 3;
+    case '*': case '/': return 4;
+    case TK_DEREF: return 5;
+    default: return 6;
+  }
+}
+
 int find_main_operator(int p, int q) {
   int op = -1;
   int level = 0;
@@ -166,13 +183,20 @@ int find_main_operator(int p, int q) {
       level --;
     }
     else if (level == 0) {
-      if (tokens[i].type == '+' || tokens[i].type == '-') {
-        op = i;
+      if (tokens[i].type == TK_NUM || tokens[i].type == TK_HEX || tokens[i].type == TK_REG) {
+        continue;
       }
-      else if (tokens[i].type == '*' || tokens[i].type == '/') {
-        if (op == -1) op = i;
-        else {
-          if (tokens[op].type == '*' || tokens[op].type == '/') op = i;
+      
+      if (op == -1) op = i;
+      else {
+        int r_prec = precedence(tokens[i].type);
+        int l_prec = precedence(tokens[op].type);
+        if (tokens[i].type == TK_DEREF) {
+          // right associative
+          if (r_prec < l_prec) op = i; 
+        } else {
+          // left associative
+          if (r_prec <= l_prec) op = i;
         }
       }
     }
@@ -186,22 +210,50 @@ word_t eval(int p, int q) {
     assert(0);
   }
   else if (p == q) {
-    return (word_t)strtoul(tokens[p].str, NULL, 10); 
+    if (tokens[p].type == TK_NUM) {
+      return (word_t)strtoull(tokens[p].str, NULL, 10); 
+    } else if (tokens[p].type == TK_HEX) {
+      return (word_t)strtoull(tokens[p].str, NULL, 16); 
+    } else if (tokens[p].type == TK_REG) {
+      bool success;
+      word_t val = isa_reg_str2val(tokens[p].str + 1, &success);
+      if (!success) {
+        printf("unknown register: %s\n", tokens[p].str);
+        assert(0);
+      }
+      return val;
+    }
+    assert(0);
   }
   else if (check_parentheses(p, q) == true) {
     return eval(p + 1, q - 1);
   }
   else {
     int op = find_main_operator(p, q);
+    int op_type = tokens[op].type;
+    
+    if (op_type == TK_DEREF) {
+      word_t val = eval(op + 1, q);
+      extern word_t vaddr_read(vaddr_t addr, int len);
+      return vaddr_read(val, sizeof(word_t));
+    }
+
     word_t val1 = eval(p, op - 1);
     word_t val2 = eval(op + 1, q);
-    int op_type = tokens[op].type;
 
     switch (op_type) {
       case '+': return val1 + val2;
       case '-': return val1 - val2;
       case '*': return val1 * val2;
-      case '/': return val1 / val2;
+      case '/': 
+        if (val2 == 0) {
+          printf("divide by zero\n");
+          assert(0);
+        }
+        return val1 / val2;
+      case TK_EQ: return val1 == val2;
+      case TK_NEQ: return val1 != val2;
+      case TK_AND: return val1 && val2;
       default: assert(0);
     }
   }
@@ -214,7 +266,18 @@ word_t expr(char *e, bool *success) {
     return 0;
   }
 
+  for (int i = 0; i < nr_token; i ++) {
+    if (tokens[i].type == '*' && (i == 0 || (tokens[i - 1].type != TK_NUM && tokens[i - 1].type != TK_HEX && tokens[i - 1].type != TK_REG && tokens[i - 1].type != ')'))) {
+      tokens[i].type = TK_DEREF;
+    }
+  }
+
   /* TODO: Insert codes to evaluate the expression. */
+  if (nr_token == 0) {
+    *success = false;
+    return 0;
+  }
+  
   *success = true;
   return eval(0, nr_token - 1);
 }
