@@ -21,7 +21,7 @@
 #include <regex.h>
 
 enum {
-  TK_NOTYPE = 256, TK_EQ,
+  TK_NOTYPE = 256, TK_EQ, TK_NUM,
 
   /* TODO: Add more token types */
 
@@ -38,7 +38,14 @@ static struct rule {
 
   {" +", TK_NOTYPE},    // spaces
   {"\\+", '+'},         // plus
+  {"-", '-'},          // minus (may be unary or binary)
   {"==", TK_EQ},        // equal
+  {"[0-9]+", TK_NUM},   // decimal number
+  {"\\*", '*'},       // multiply
+  {"/", '/'},           // divide
+  {"\\(", '('},       // left paren
+  {"\\)", ')'},       // right paren
+
 };
 
 #define NR_REGEX ARRLEN(rules)
@@ -67,7 +74,7 @@ typedef struct token {
   char str[32];
 } Token;
 
-static Token tokens[32] __attribute__((used)) = {};
+static Token tokens[64] __attribute__((used)) = {};
 static int nr_token __attribute__((used))  = 0;
 
 static bool make_token(char *e) {
@@ -84,8 +91,8 @@ static bool make_token(char *e) {
         char *substr_start = e + position;
         int substr_len = pmatch.rm_eo;
 
-        Log("match rules[%d] = \"%s\" at position %d with len %d: %.*s",
-            i, rules[i].regex, position, substr_len, substr_len, substr_start);
+        // Log("match rules[%d] = \"%s\" at position %d with len %d: %.*s",
+            // i, rules[i].regex, position, substr_len, substr_len, substr_start);
 
         position += substr_len;
 
@@ -93,9 +100,24 @@ static bool make_token(char *e) {
          * to record the token in the array `tokens'. For certain types
          * of tokens, some extra actions should be performed.
          */
+        if (nr_token >= 64) {
+          printf("too many tokens\n");
+          return false;
+        }
 
         switch (rules[i].token_type) {
-          default: TODO();
+          case TK_NOTYPE:
+            /* skip spaces */
+            break;
+          case TK_NUM:
+            strncpy(tokens[nr_token].str, substr_start, substr_len);
+            tokens[nr_token].str[substr_len] = '\0';
+            tokens[nr_token].type = TK_NUM;
+            nr_token++;
+            break;
+          default:
+            tokens[nr_token].type = rules[i].token_type;
+            nr_token++;
         }
 
         break;
@@ -111,6 +133,80 @@ static bool make_token(char *e) {
   return true;
 }
 
+int check_parentheses(int p, int q) {
+  if (tokens[p].type != '(' || tokens[q].type != ')') {
+    return false;
+  }
+
+  int level = 0;
+  for (int i = p + 1; i < q; i ++) {
+    if (tokens[i].type == '(') {
+      level ++;
+    }
+    else if (tokens[i].type == ')') {
+      if (level == 0) {
+        return false;
+      }
+      level --;
+    }
+  }
+
+  return level == 0;
+}
+
+int find_main_operator(int p, int q) {
+  int op = -1;
+  int level = 0;
+
+  for (int i = p; i <= q; i ++) {
+    if (tokens[i].type == '(') {
+      level ++;
+    }
+    else if (tokens[i].type == ')') {
+      level --;
+    }
+    else if (level == 0) {
+      if (tokens[i].type == '+' || tokens[i].type == '-') {
+        op = i;
+      }
+      else if (tokens[i].type == '*' || tokens[i].type == '/') {
+        if (op == -1) op = i;
+        else {
+          if (tokens[op].type == '*' || tokens[op].type == '/') op = i;
+        }
+      }
+    }
+  }
+
+  return op;
+}
+
+word_t eval(int p, int q) {
+  if (p > q) {
+    assert(0);
+  }
+  else if (p == q) {
+    return (word_t)strtoul(tokens[p].str, NULL, 10); 
+  }
+  else if (check_parentheses(p, q) == true) {
+    return eval(p + 1, q - 1);
+  }
+  else {
+    int op = find_main_operator(p, q);
+    word_t val1 = eval(p, op - 1);
+    word_t val2 = eval(op + 1, q);
+    int op_type = tokens[op].type;
+
+    switch (op_type) {
+      case '+': return val1 + val2;
+      case '-': return val1 - val2;
+      case '*': return val1 * val2;
+      case '/': return val1 / val2;
+      default: assert(0);
+    }
+  }
+}
+
 
 word_t expr(char *e, bool *success) {
   if (!make_token(e)) {
@@ -119,7 +215,6 @@ word_t expr(char *e, bool *success) {
   }
 
   /* TODO: Insert codes to evaluate the expression. */
-  TODO();
-
-  return 0;
+  *success = true;
+  return eval(0, nr_token - 1);
 }

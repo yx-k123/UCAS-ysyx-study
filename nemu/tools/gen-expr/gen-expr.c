@@ -31,8 +31,45 @@ static char *code_format =
 "  return 0; "
 "}";
 
+static int buf_pos = 0;
+
+static inline int choose(int n) {
+    return rand() % n;
+}
+
+static void gen_expr(int depth) {
+    if (depth == 0) {
+        buf_pos += sprintf(buf + buf_pos, "%uu", choose(100) + 1);
+        return;
+    }
+    int type = choose(3);
+
+    if (type == 0) {
+        buf_pos += sprintf(buf + buf_pos, "%uu", choose(100) + 1);
+    } 
+    else if (type == 1) {
+        buf_pos += sprintf(buf + buf_pos, "(");
+        gen_expr(depth - 1);
+        buf_pos += sprintf(buf + buf_pos, ")");
+    } 
+    else { // type == 2
+        gen_expr(depth - 1);
+        char op = "+-*/"[choose(4)];
+        buf_pos += sprintf(buf + buf_pos, " %c ", op);
+        
+        if (op == '/') {
+            buf_pos += sprintf(buf + buf_pos, "%uu", choose(99) + 1);
+        } else {
+            gen_expr(depth - 1);
+        }
+    }
+}
+
 static void gen_rand_expr() {
-  buf[0] = '\0';
+    buf_pos = 0;
+    buf[0] = '\0'; 
+
+    gen_expr(5); 
 }
 
 int main(int argc, char *argv[]) {
