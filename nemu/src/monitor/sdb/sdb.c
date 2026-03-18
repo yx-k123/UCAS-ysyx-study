@@ -117,6 +117,30 @@ static int cmd_p(char *args) {
   return 0;
 }
 
+static int cmd_w(char *args) {
+  if (args == NULL) {
+    printf("Usage: w EXPR\n");
+    return 0;
+  }
+
+  WP *wp = new_wp();
+  if (wp == NULL) {
+    printf("Failed to create watchpoint\n");
+    return 0;
+  }
+  strncpy(wp->expr, args, sizeof(wp->expr) - 1);
+  wp->expr[sizeof(wp->expr) - 1] = '\0';
+  bool success = false;
+  wp->value = expr(args, &success);
+  if (!success) {
+    printf("Invalid expression: %s\n", args);
+    free_wp(wp);
+    return 0;
+  }
+  printf("Watchpoint %d: %s = " FMT_WORD "\n", wp->NO, wp->expr, wp->value);
+  return 0;
+}
+
 static int cmd_help(char *args);
 
 static struct {
@@ -131,6 +155,7 @@ static struct {
   { "info", "Display information about registers or watchpoints", cmd_info },
   { "x", "Examine memory", cmd_x },
   { "p", "Evaluate expression", cmd_p },
+  { "w", "Create watchpoint", cmd_w },
 };
 
 #define NR_CMD ARRLEN(cmd_table)
