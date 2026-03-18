@@ -81,6 +81,8 @@ int main(int argc, char *argv[]) {
     free(line);
     fclose(fp);
   }
+  printf("expr test passed!\n");
+
 #endif
 
   /* Start engine. */
