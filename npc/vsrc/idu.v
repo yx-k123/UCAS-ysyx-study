@@ -14,6 +14,7 @@ module idu (
   output        is_lbu_o,
   output        is_sb_o,
   output        is_jalr_o,
+  output        is_ebreak_o,
 
   output        wb_en_o,
   output        wb_from_load_o,
@@ -40,6 +41,7 @@ module idu (
   wire is_sw   = (opcode == 7'b0100011) && (funct3 == 3'b010);
   wire is_sb   = (opcode == 7'b0100011) && (funct3 == 3'b000);
   wire is_jalr = (opcode == 7'b1100111) && (funct3 == 3'b000);
+  wire is_ebreak = (inst_i == 32'h0010_0073);
 
   assign op2_is_rs2_o = is_add;
   assign use_u_imm_o  = is_lui;
@@ -53,6 +55,7 @@ module idu (
   assign is_lbu_o   = is_lbu;
   assign is_sb_o    = is_sb;
   assign is_jalr_o  = is_jalr;
+  assign is_ebreak_o = is_ebreak;
 
   assign wb_en_o        = is_add || is_addi || is_lui || is_lw || is_lbu || is_jalr;
   assign wb_from_load_o = is_lw || is_lbu;

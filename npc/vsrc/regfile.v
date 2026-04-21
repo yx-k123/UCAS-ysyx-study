@@ -11,9 +11,14 @@ module regfile (
 );
 
   reg [31:0] gpr [1:31]; 
+  integer i;
 
   always @(posedge clk) begin
-    if (we_i && (waddr_i != 5'd0)) begin
+    if (rst) begin
+      for (i = 1; i < 32; i = i + 1) begin
+        gpr[i] <= 32'b0;
+      end
+    end else if (we_i && (waddr_i != 5'd0)) begin
       gpr[waddr_i] <= wdata_i;
     end
   end

@@ -9,6 +9,15 @@
 static const uint32_t MEM_BASE = 0x00000000u;
 static const uint32_t MEM_SIZE = 0x00010000u;
 static uint8_t pmem[MEM_SIZE];
+static bool g_ebreak_hit = false;
+static uint32_t g_ebreak_pc = 0;
+static uint32_t g_ebreak_inst = 0;
+
+extern "C" void npc_ebreak(unsigned int pc, unsigned int inst) {
+  g_ebreak_hit = true;
+  g_ebreak_pc = (uint32_t)pc;
+  g_ebreak_inst = (uint32_t)inst;
+}
 
 static inline bool in_pmem(uint32_t addr) {
   return addr >= MEM_BASE && addr + 3 < MEM_BASE + MEM_SIZE;
@@ -55,8 +64,8 @@ static void load_demo_program() {
   pmem_write_inst(0x0c, 0x0000c183u);
   // add x4, x2, x3
   pmem_write_inst(0x10, 0x00310233u);
-  // jalr x0, x0, 0x14 (jump to self)
-  pmem_write_inst(0x14, 0x01400067u);
+  // ebreak
+  pmem_write_inst(0x14, 0x00100073u);
 }
 
 static void feed_memory_inputs(Vtop* top) {
@@ -87,7 +96,8 @@ int main(int argc, char** argv) {
   top->clk = 0;
   top->rst = 0;
 
-  for (int cycle = 0; cycle < 20; cycle++) {
+  int cycle = 0;
+  while (!contextp->gotFinish() && !g_ebreak_hit) {
     // 1) let RTL expose memory request address/control.
     top->eval();
     // 2) C++ memory returns read data combinationally.
@@ -109,11 +119,19 @@ int main(int argc, char** argv) {
     top->clk = 1;
     top->eval();
     top->clk = 0;
+
+    cycle++;
+    if (cycle > 1000000) {
+      printf("timeout: no ebreak observed\n");
+      break;
+    }
   }
 
   uint32_t mem_word = pmem_read32(0x80);
   printf("mem[0x80]=0x%08x (expect 0x0000002a)\n", mem_word);
   assert(mem_word == 0x0000002au);
+  assert(g_ebreak_hit);
+  printf("ebreak at pc=0x%08x inst=0x%08x\n", g_ebreak_pc, g_ebreak_inst);
 
   delete top;
   delete contextp;

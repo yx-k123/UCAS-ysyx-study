@@ -16,6 +16,8 @@ module top (
   output [31:0] debug_inst
 );
 
+  import "DPI-C" function void npc_ebreak(input int unsigned pc, input int unsigned inst);
+
   reg [31:0] pc_r;
   wire [31:0] pc_next;
 
@@ -34,6 +36,7 @@ module top (
   wire is_lbu;
   wire is_sb;
   wire is_jalr;
+  wire is_ebreak;
 
   wire wb_en;
   wire wb_from_load;
@@ -71,6 +74,7 @@ module top (
     .is_lbu_o(is_lbu),
     .is_sb_o(is_sb),
     .is_jalr_o(is_jalr),
+    .is_ebreak_o(is_ebreak),
     .wb_en_o(wb_en),
     .wb_from_load_o(wb_from_load),
     .wb_from_pc4_o(wb_from_pc4)
@@ -134,6 +138,9 @@ module top (
     if (rst) begin
       pc_r <= 32'h0000_0000;
     end else begin
+      if (is_ebreak) begin
+        npc_ebreak(pc_r, inst);
+      end
       pc_r <= pc_next;
     end
   end
