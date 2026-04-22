@@ -18,7 +18,7 @@ MAINARGS_PLACEHOLDER = the_insert-arg_rule_in_Makefile_will_insert_mainargs_here
 CFLAGS += -DMAINARGS_MAX_LEN=$(MAINARGS_MAX_LEN) -DMAINARGS_PLACEHOLDER=$(MAINARGS_PLACEHOLDER)
 
 insert-arg: image
-	@python $(AM_HOME)/tools/insert-arg.py $(IMAGE).bin $(MAINARGS_MAX_LEN) $(MAINARGS_PLACEHOLDER) "$(mainargs)"
+	@python3 $(AM_HOME)/tools/insert-arg.py $(IMAGE).bin $(MAINARGS_MAX_LEN) $(MAINARGS_PLACEHOLDER) "$(mainargs)"
 
 image: image-dep
 	@$(OBJDUMP) -d $(IMAGE).elf > $(IMAGE).txt
@@ -26,6 +26,17 @@ image: image-dep
 	@$(OBJCOPY) -S --set-section-flags .bss=alloc,contents -O binary $(IMAGE).elf $(IMAGE).bin
 
 run: insert-arg
-	echo "TODO: add command here to run simulation"
+#     echo "TODO: add command here to run simulation"
+	@if [ -z "$(NPC_HOME)" ]; then \
+		echo "NPC_HOME is not set"; \
+		exit 1; \
+	fi
+	@if ! command -v verilator >/dev/null 2>&1; then \
+		echo "verilator not found in PATH"; \
+		exit 1; \
+	fi
+	@verilator --cc --exe --build --top-module top -Mdir "$(NPC_HOME)/build/obj_dir" \
+		"$(NPC_HOME)/csrc/main.cpp" "$(NPC_HOME)"/vsrc/*.v
+	@"$(NPC_HOME)/build/obj_dir/Vtop" "$(IMAGE).bin"
 
 .PHONY: insert-arg

@@ -1,22 +1,26 @@
 #include <assert.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "Vtop.h"
 #include "verilated.h"
 
-static const uint32_t MEM_BASE = 0x00000000u;
-static const uint32_t MEM_SIZE = 0x00010000u;
+static const uint32_t MEM_BASE = 0x80000000u;
+static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static uint8_t pmem[MEM_SIZE];
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
+static uint32_t g_ebreak_a0 = 0;
 
-extern "C" void npc_ebreak(unsigned int pc, unsigned int inst) {
+extern "C" void npc_ebreak(unsigned int pc, unsigned int inst, unsigned int a0) {
   g_ebreak_hit = true;
   g_ebreak_pc = (uint32_t)pc;
   g_ebreak_inst = (uint32_t)inst;
+  g_ebreak_a0 = (uint32_t)a0;
 }
 
 static inline bool in_pmem(uint32_t addr) {
@@ -35,7 +39,7 @@ static uint32_t pmem_read32(uint32_t addr) {
          ((uint32_t)pmem[off + 3] << 24);
 }
 
-static void pmem_write(uint32_t addr, uint32_t data, uint8_t wmask) {
+static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
   if (!in_pmem(addr)) {
     printf("write out of range: 0x%08x\n", addr);
     return;
@@ -47,47 +51,84 @@ static void pmem_write(uint32_t addr, uint32_t data, uint8_t wmask) {
   if (wmask & 0x8) pmem[off + 3] = (data >> 24) & 0xff;
 }
 
-static void pmem_write_inst(uint32_t addr, uint32_t inst) {
-  pmem_write(addr, inst, 0x0f);
+extern "C" int pmem_read(int raddr) {
+  uint32_t addr = ((uint32_t)raddr) & ~0x3u;
+  return (int)pmem_read32(addr);
 }
 
-static void load_demo_program() {
-  memset(pmem, 0, sizeof(pmem));
-
-  // addi x1, x0, 0x80
-  pmem_write_inst(0x00, 0x08000093u);
-  // addi x2, x0, 0x2a
-  pmem_write_inst(0x04, 0x02a00113u);
-  // sw x2, 0(x1)
-  pmem_write_inst(0x08, 0x0020a023u);
-  // lbu x3, 0(x1)
-  pmem_write_inst(0x0c, 0x0000c183u);
-  // add x4, x2, x3
-  pmem_write_inst(0x10, 0x00310233u);
-  // ebreak
-  pmem_write_inst(0x14, 0x00100073u);
+extern "C" void pmem_write(int waddr, int wdata, char wmask) {
+  uint32_t addr = ((uint32_t)waddr) & ~0x3u;
+  pmem_write_masked(addr, (uint32_t)wdata, (uint8_t)wmask);
 }
 
-static void feed_memory_inputs(Vtop* top) {
-  top->imem_rdata = pmem_read32(top->imem_addr);
-  if (top->dmem_valid && !top->dmem_wen) {
-    top->dmem_rdata = pmem_read32(top->dmem_addr);
-  } else {
-    top->dmem_rdata = 0;
+static bool load_img(const char* img_path) {
+  FILE* fp = fopen(img_path, "rb");
+  if (fp == NULL) {
+    printf("failed to open %s: %s\n", img_path, strerror(errno));
+    return false;
   }
+
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    fclose(fp);
+    return false;
+  }
+  long size = ftell(fp);
+  if (size < 0 || (uint32_t)size > MEM_SIZE) {
+    printf("image too large: %ld bytes\n", size);
+    fclose(fp);
+    return false;
+  }
+  rewind(fp);
+
+  memset(pmem, 0, sizeof(pmem));
+  size_t n = fread(pmem, 1, (size_t)size, fp);
+  fclose(fp);
+  if (n != (size_t)size) {
+    printf("failed to read full image, got %zu bytes\n", n);
+    return false;
+  }
+
+  printf("loaded image %s (%ld bytes)\n", img_path, size);
+  return true;
+}
+
+static bool parse_u32_hex(const char* s, uint32_t* out) {
+  char* endp = NULL;
+  unsigned long v = strtoul(s, &endp, 0);
+  if (endp == s || *endp != '\0' || v > 0xfffffffful) {
+    return false;
+  }
+  *out = (uint32_t)v;
+  return true;
 }
 
 int main(int argc, char** argv) {
+  if (argc < 2) {
+    printf("usage: %s <image.bin> [halt_addr]\n", argv[0]);
+    printf("example: %s /path/to/sum-riscv32e-npc.bin 0x100\n", argv[0]);
+    return 1;
+  }
+
+  if (!load_img(argv[1])) {
+    return 1;
+  }
+
+  if (argc >= 3) {
+    uint32_t halt_addr = 0;
+    if (!parse_u32_hex(argv[2], &halt_addr)) {
+      printf("invalid halt_addr: %s\n", argv[2]);
+      return 1;
+    }
+    pmem_write_masked(halt_addr, 0x00100073u, 0x0f);
+    printf("patched ebreak at 0x%08x\n", halt_addr);
+  }
+
   VerilatedContext* contextp = new VerilatedContext;
   contextp->commandArgs(argc, argv);
   Vtop* top = new Vtop{contextp};
 
-  load_demo_program();
-
   top->clk = 0;
   top->rst = 1;
-  top->imem_rdata = 0;
-  top->dmem_rdata = 0;
 
   // Reset for one cycle.
   top->eval();
@@ -97,24 +138,9 @@ int main(int argc, char** argv) {
   top->rst = 0;
 
   int cycle = 0;
+  int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
-    // 1) let RTL expose memory request address/control.
     top->eval();
-    // 2) C++ memory returns read data combinationally.
-    feed_memory_inputs(top);
-    top->eval();
-
-    if (top->dmem_valid && top->dmem_wen) {
-      pmem_write(top->dmem_addr, top->dmem_wdata, (uint8_t)top->dmem_wmask);
-    }
-
-    printf("cycle=%02d pc=0x%08x inst=0x%08x dvalid=%d dwen=%d daddr=0x%08x\n",
-           cycle,
-           (uint32_t)top->debug_pc,
-           (uint32_t)top->debug_inst,
-           (int)top->dmem_valid,
-           (int)top->dmem_wen,
-           (uint32_t)top->dmem_addr);
 
     top->clk = 1;
     top->eval();
@@ -127,13 +153,21 @@ int main(int argc, char** argv) {
     }
   }
 
-  uint32_t mem_word = pmem_read32(0x80);
-  printf("mem[0x80]=0x%08x (expect 0x0000002a)\n", mem_word);
-  assert(mem_word == 0x0000002au);
-  assert(g_ebreak_hit);
-  printf("ebreak at pc=0x%08x inst=0x%08x\n", g_ebreak_pc, g_ebreak_inst);
+  if (g_ebreak_hit) {
+    printf("ebreak at pc=0x%08x inst=0x%08x a0=%u\n", g_ebreak_pc, g_ebreak_inst, g_ebreak_a0);
+    if (g_ebreak_a0 == 0) {
+      printf("HIT GOOD TRAP\n");
+      exit_code = 0;
+    } else {
+      printf("HIT BAD TRAP with exit code %u\n", g_ebreak_a0);
+      exit_code = (int)g_ebreak_a0;
+    }
+  } else {
+    printf("simulation stopped without ebreak\n");
+    assert(0);
+  }
 
   delete top;
   delete contextp;
-  return 0;
+  return exit_code;
 }

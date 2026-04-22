@@ -2,21 +2,11 @@ module top (
   input         clk,
   input         rst,
 
-  input  [31:0] imem_rdata,
-  output [31:0] imem_addr,
-
-  input  [31:0] dmem_rdata,
-  output        dmem_valid,
-  output        dmem_wen,
-  output [31:0] dmem_addr,
-  output [31:0] dmem_wdata,
-  output [3:0]  dmem_wmask,
-
   output [31:0] debug_pc,
   output [31:0] debug_inst
 );
 
-  import "DPI-C" function void npc_ebreak(input int unsigned pc, input int unsigned inst);
+  import "DPI-C" function void npc_ebreak(input int unsigned pc, input int unsigned inst, input int unsigned a0);
 
   reg [31:0] pc_r;
   wire [31:0] pc_next;
@@ -44,6 +34,7 @@ module top (
 
   wire [31:0] rs1_data;
   wire [31:0] rs2_data;
+  wire [31:0] a0_data;
 
   wire [31:0] alu_res;
   wire [31:0] jalr_target;
@@ -56,8 +47,6 @@ module top (
 
   ifu u_ifu (
     .pc_i(pc_r),
-    .imem_rdata_i(imem_rdata),
-    .imem_addr_o(imem_addr),
     .inst_o(inst)
   );
 
@@ -89,7 +78,8 @@ module top (
     .raddr1_i(rs1_idx),
     .raddr2_i(rs2_idx),
     .rdata1_o(rs1_data),
-    .rdata2_o(rs2_data)
+    .rdata2_o(rs2_data),
+    .a0_o(a0_data)
   );
 
   exu u_exu (
@@ -109,12 +99,6 @@ module top (
     .is_sb_i(is_sb),
     .addr_i(alu_res),
     .store_data_i(rs2_data),
-    .dmem_rdata_i(dmem_rdata),
-    .dmem_valid_o(dmem_valid),
-    .dmem_wen_o(dmem_wen),
-    .dmem_addr_o(dmem_addr),
-    .dmem_wdata_o(dmem_wdata),
-    .dmem_wmask_o(dmem_wmask),
     .load_data_o(load_data)
   );
 
@@ -136,10 +120,10 @@ module top (
 
   always @(posedge clk) begin
     if (rst) begin
-      pc_r <= 32'h0000_0000;
+      pc_r <= 32'h8000_0000;
     end else begin
       if (is_ebreak) begin
-        npc_ebreak(pc_r, inst);
+        npc_ebreak(pc_r, inst, a0_data);
       end
       pc_r <= pc_next;
     end
