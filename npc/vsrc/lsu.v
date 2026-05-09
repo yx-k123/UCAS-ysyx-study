@@ -1,4 +1,6 @@
 module lsu (
+  input         clk,
+
   input         is_load_i,
   input         is_store_i,
   input         is_lbu_i,
@@ -43,11 +45,14 @@ module lsu (
   always @(*) begin
     if (valid) begin
       dmem_rdata = pmem_read(aligned_addr);
-      if (is_store_i) begin
-        pmem_write(aligned_addr, dmem_wdata, {4'b0, dmem_wmask});
-      end
     end else begin
       dmem_rdata = 32'b0;
+    end
+  end
+
+  always @(posedge clk) begin
+    if (is_store_i) begin
+      pmem_write(aligned_addr, dmem_wdata, {4'b0, dmem_wmask});
     end
   end
 

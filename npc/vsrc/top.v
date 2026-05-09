@@ -93,6 +93,7 @@ module top (
   );
 
   lsu u_lsu (
+    .clk(clk),
     .is_load_i(is_load),
     .is_store_i(is_store),
     .is_lbu_i(is_lbu),

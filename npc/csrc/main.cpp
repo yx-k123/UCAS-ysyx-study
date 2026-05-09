@@ -7,6 +7,8 @@
 
 #include "Vtop.h"
 #include "verilated.h"
+#include "verilated_vcd_c.h"
+
 
 static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
@@ -127,24 +129,45 @@ int main(int argc, char** argv) {
   contextp->commandArgs(argc, argv);
   Vtop* top = new Vtop{contextp};
 
+  Verilated::traceEverOn(true);
+  VerilatedVcdC* tfp = new VerilatedVcdC;
+  top->trace(tfp, 99);
+  const char* wave_path = "wave.vcd";
+  tfp->open(wave_path);
+  printf("wave dump: %s\n", wave_path);
+
   top->clk = 0;
   top->rst = 1;
 
   // Reset for one cycle.
   top->eval();
+  tfp->dump(contextp->time());
+  contextp->timeInc(1);
   top->clk = 1;
   top->eval();
+  tfp->dump(contextp->time());
+  contextp->timeInc(1);
   top->clk = 0;
   top->rst = 0;
+  top->eval();
+  tfp->dump(contextp->time());
+  contextp->timeInc(1);
 
   int cycle = 0;
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
     top->eval();
+    tfp->dump(contextp->time());
+    contextp->timeInc(1);
 
     top->clk = 1;
     top->eval();
+    tfp->dump(contextp->time());
+    contextp->timeInc(1);
     top->clk = 0;
+    top->eval();
+    tfp->dump(contextp->time());
+    contextp->timeInc(1);
 
     cycle++;
     if (cycle > 1000000) {
@@ -167,6 +190,8 @@ int main(int argc, char** argv) {
     assert(0);
   }
 
+  tfp->close();
+  delete tfp;
   delete top;
   delete contextp;
   return exit_code;
