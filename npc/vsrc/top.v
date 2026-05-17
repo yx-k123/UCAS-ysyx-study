@@ -71,7 +71,6 @@ module top (
 
   regfile u_regfile (
     .clk(clk),
-    .rst(rst),
     .we_i(rf_we),
     .waddr_i(rf_waddr),
     .wdata_i(rf_wdata),

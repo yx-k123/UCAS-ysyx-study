@@ -18,6 +18,45 @@ static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
 
+Vtop* g_top = NULL;
+
+#define ITRACE_BUF_SIZE 16
+typedef struct {
+  uint32_t pc;
+  uint32_t inst;
+} ItraceNode;
+
+static ItraceNode itrace_buf[ITRACE_BUF_SIZE];
+static int itrace_idx = 0;
+static bool itrace_full = false;
+
+static void itrace_record(uint32_t pc, uint32_t inst) {
+  itrace_buf[itrace_idx].pc = pc;
+  itrace_buf[itrace_idx].inst = inst;
+  itrace_idx++;
+  if (itrace_idx >= ITRACE_BUF_SIZE) {
+    itrace_idx = 0;
+    itrace_full = true;
+  }
+}
+
+static void itrace_print(uint32_t error_pc) {
+  printf("--- Instruction Trace ---\n");
+  int count = itrace_full ? ITRACE_BUF_SIZE : itrace_idx;
+  int start = itrace_full ? itrace_idx : 0;
+  for (int i = 0; i < count; i++) {
+    int idx = (start + i) % ITRACE_BUF_SIZE;
+    uint32_t pc = itrace_buf[idx].pc;
+    uint32_t inst = itrace_buf[idx].inst;
+    if (pc == error_pc) {
+      printf("--> pc: 0x%08x, inst: 0x%08x\n", pc, inst);
+    } else {
+      printf("    pc: 0x%08x, inst: 0x%08x\n", pc, inst);
+    }
+  }
+  printf("-------------------------\n");
+}
+
 extern "C" void npc_ebreak(unsigned int pc, unsigned int inst, unsigned int a0) {
   g_ebreak_hit = true;
   g_ebreak_pc = (uint32_t)pc;
@@ -31,7 +70,6 @@ static inline bool in_pmem(uint32_t addr) {
 
 static uint32_t pmem_read32(uint32_t addr) {
   if (!in_pmem(addr)) {
-    printf("read out of range: 0x%08x\n", addr);
     return 0;
   }
   uint32_t off = addr - MEM_BASE;
@@ -44,6 +82,10 @@ static uint32_t pmem_read32(uint32_t addr) {
 static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
   if (!in_pmem(addr)) {
     printf("write out of range: 0x%08x\n", addr);
+    if (g_top) {
+      itrace_print(g_top->debug_pc);
+    }
+    assert(0);
     return;
   }
   uint32_t off = addr - MEM_BASE;
@@ -128,6 +170,7 @@ int main(int argc, char** argv) {
   VerilatedContext* contextp = new VerilatedContext;
   contextp->commandArgs(argc, argv);
   Vtop* top = new Vtop{contextp};
+  g_top = top;
 
   Verilated::traceEverOn(true);
   VerilatedVcdC* tfp = new VerilatedVcdC;
@@ -160,6 +203,8 @@ int main(int argc, char** argv) {
     tfp->dump(contextp->time());
     contextp->timeInc(1);
 
+    itrace_record(top->debug_pc, top->debug_inst);
+
     top->clk = 1;
     top->eval();
     tfp->dump(contextp->time());
@@ -183,6 +228,7 @@ int main(int argc, char** argv) {
       exit_code = 0;
     } else {
       printf("HIT BAD TRAP with exit code %u\n", g_ebreak_a0);
+      itrace_print(g_ebreak_pc);
       exit_code = (int)g_ebreak_a0;
     }
   } else {

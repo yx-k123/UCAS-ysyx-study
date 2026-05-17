@@ -1,6 +1,5 @@
 module regfile (
   input         clk,
-  input         rst,
   input         we_i,
   input  [4:0]  waddr_i,
   input  [31:0] wdata_i,
@@ -11,21 +10,17 @@ module regfile (
   output [31:0] a0_o
 );
 
-  reg [31:0] gpr [1:31]; 
-  integer i;
+  reg [31:0] gpr [31:0]; 
 
   always @(posedge clk) begin
-    if (rst) begin
-      for (i = 1; i < 32; i = i + 1) begin
-        gpr[i] <= 32'b0;
-      end
-    end else if (we_i && (waddr_i != 5'd0)) begin
+    if (we_i) begin
       gpr[waddr_i] <= wdata_i;
     end
   end
 
   assign rdata1_o = (raddr1_i == 5'd0) ? 32'b0 : gpr[raddr1_i];
   assign rdata2_o = (raddr2_i == 5'd0) ? 32'b0 : gpr[raddr2_i];
+
   assign a0_o = gpr[10];
 
 endmodule
