@@ -26,15 +26,15 @@ char *strcpy(char *dst, const char *src) {
 
 char *strncpy(char *dst, const char *src, size_t n) {
   char *ret = dst;
-  for (size_t i = 0; i < n && *src != '\0'; i++) {
-    *dst = *src;
-    dst++;
-    src++;
+  size_t i = 0;
+
+  for (; i < n && src[i] != '\0'; i++) {
+    dst[i] = src[i];
   }
-  for (size_t i = strlen(ret); i < n; i++) {
-    *dst = '\0';
-    dst++;
+  for (; i < n; i++) {
+    dst[i] = '\0';
   }
+
   return ret;
 }
 

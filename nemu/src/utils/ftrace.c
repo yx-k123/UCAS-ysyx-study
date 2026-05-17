@@ -11,6 +11,7 @@ typedef struct {
 static Symbol *symbols = NULL;
 static int num_symbols = 0;
 static int call_depth = 0;
+static char indent_buf[256];
 
 static bool read_exact(FILE *fp, void *buf, size_t size, size_t n) {
   return fread(buf, size, n, fp) == n;
@@ -150,17 +151,26 @@ static const char *get_func_name(vaddr_t addr) {
   return "???";
 }
 
+static const char *get_indent(void) {
+  int max_depth = (int)(sizeof(indent_buf) / 2) - 1;
+  int depth = call_depth;
+  if (depth < 0) depth = 0;
+  if (depth > max_depth) depth = max_depth;
+  for (int i = 0; i < depth; i++) {
+    indent_buf[i * 2] = ' ';
+    indent_buf[i * 2 + 1] = ' ';
+  }
+  indent_buf[depth * 2] = '\0';
+  return indent_buf;
+}
+
 void ftrace_call(vaddr_t pc, vaddr_t target) {
-  printf("0x%08x: ", pc);
-  for (int i = 0; i < call_depth; i++) printf("  ");
-  printf("call [%s@0x%08x]\n", get_func_name(target), target);
+  log_write("0x%08x: %scall [%s@0x%08x]\n", pc, get_indent(), get_func_name(target), target);
   call_depth++;
 }
 
 void ftrace_ret(vaddr_t pc) {
   call_depth--;
   if (call_depth < 0) call_depth = 0;
-  printf("0x%08x: ", pc);
-  for (int i = 0; i < call_depth; i++) printf("  ");
-  printf("ret [%s]\n", get_func_name(pc));
+  log_write("0x%08x: %sret [%s]\n", pc, get_indent(), get_func_name(pc));
 }
