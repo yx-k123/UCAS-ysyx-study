@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "Vtop.h"
 #include "verilated.h"
@@ -12,6 +13,8 @@
 
 static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
+static const uint32_t UART_ADDR = 0x10000000u;
+static const uint32_t TIME_ADDR = 0x10000010u;
 static uint8_t pmem[MEM_SIZE];
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
@@ -57,6 +60,12 @@ static void itrace_print(uint32_t error_pc) {
   printf("-------------------------\n");
 }
 
+static uint64_t get_time_us() {
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
+
 extern "C" void npc_ebreak(unsigned int pc, unsigned int inst, unsigned int a0) {
   g_ebreak_hit = true;
   g_ebreak_pc = (uint32_t)pc;
@@ -97,11 +106,27 @@ static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
 
 extern "C" int pmem_read(int raddr) {
   uint32_t addr = ((uint32_t)raddr) & ~0x3u;
+  if (addr == TIME_ADDR || addr == TIME_ADDR + 4) {
+    uint64_t us = get_time_us();
+    if (addr == TIME_ADDR) return (int)(us & 0xffffffffu);
+    return (int)(us >> 32);
+  }
   return (int)pmem_read32(addr);
 }
 
 extern "C" void pmem_write(int waddr, int wdata, char wmask) {
   uint32_t addr = ((uint32_t)waddr) & ~0x3u;
+  if (addr == UART_ADDR) {
+    uint8_t mask = (uint8_t)wmask;
+    uint32_t data = (uint32_t)wdata;
+    for (int i = 0; i < 4; i++) {
+      if (mask & (1u << i)) {
+        putchar((data >> (i * 8)) & 0xff);
+      }
+    }
+    fflush(stdout);
+    return;
+  }
   pmem_write_masked(addr, (uint32_t)wdata, (uint8_t)wmask);
 }
 

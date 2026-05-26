@@ -11,7 +11,14 @@ extern char _pmem_start;
 Area heap = RANGE(&_heap_start, PMEM_END);
 static const char mainargs[MAINARGS_MAX_LEN] = TOSTRING(MAINARGS_PLACEHOLDER); // defined in CFLAGS
 
+#define UART_ADDR 0x10000000u
+
+static inline void mmio_write8(uintptr_t addr, uint8_t data) {
+  *(volatile uint8_t *)addr = data;
+}
+
 void putch(char ch) {
+  mmio_write8(UART_ADDR, (uint8_t)ch);
 }
 
 void halt(int code) {
