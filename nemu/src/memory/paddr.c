@@ -36,7 +36,7 @@ static void pmem_write(paddr_t addr, int len, word_t data) {
   host_write(guest_to_host(addr), len, data);
 }
 
-static void out_of_bound(paddr_t addr) {
+static void __attribute__((unused)) out_of_bound(paddr_t addr) {
   panic("address = " FMT_PADDR " is out of bound of pmem [" FMT_PADDR ", " FMT_PADDR "] at pc = " FMT_WORD,
       addr, PMEM_LEFT, PMEM_RIGHT, cpu.pc);
 }
@@ -51,14 +51,38 @@ void init_mem() {
 }
 
 word_t paddr_read(paddr_t addr, int len) {
-  if (likely(in_pmem(addr))) return pmem_read(addr, len);
-  IFDEF(CONFIG_DEVICE, return mmio_read(addr, len));
-  out_of_bound(addr);
-  return 0;
+  word_t ret;
+  if (likely(in_pmem(addr))) {
+    ret = pmem_read(addr, len);
+  } else {
+#ifdef CONFIG_DEVICE
+    ret = mmio_read(addr, len);
+#else
+    out_of_bound(addr);
+    ret = 0;
+#endif
+  }
+#ifdef CONFIG_MTRACE
+  if (MTRACE_COND) {
+    log_write("pc = " FMT_WORD ", MTRACE: [READ]  addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, ret);
+  }
+#endif
+  return ret;
 }
 
 void paddr_write(paddr_t addr, int len, word_t data) {
-  if (likely(in_pmem(addr))) { pmem_write(addr, len, data); return; }
-  IFDEF(CONFIG_DEVICE, mmio_write(addr, len, data); return);
-  out_of_bound(addr);
+  if (likely(in_pmem(addr))) { 
+    pmem_write(addr, len, data); 
+  } else {
+#ifdef CONFIG_DEVICE
+    mmio_write(addr, len, data);
+#else
+    out_of_bound(addr);
+#endif
+  }
+#ifdef CONFIG_MTRACE
+  if (MTRACE_COND) {
+    log_write("pc = " FMT_WORD ", MTRACE: [WRITE] addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, data);
+  }
+#endif
 }

@@ -34,7 +34,17 @@ void *malloc(size_t size) {
   // Therefore do not call panic() here, else it will yield a dead recursion:
   //   panic() -> putchar() -> (glibc) -> malloc() -> panic()
 #if !(defined(__ISA_NATIVE__) && defined(__NATIVE_USE_KLIB__))
-  panic("Not implemented");
+  static uintptr_t brk = 0;
+  if (size == 0) {
+    return NULL;
+  }
+  if (brk == 0) {
+    brk = ROUNDUP(heap.start, 8);
+  }
+  uintptr_t ret = brk;
+  brk = ROUNDUP(brk + size, 8);
+  panic_on(brk > (uintptr_t)heap.end, "Out of heap memory");
+  return (void *)ret;
 #endif
   return NULL;
 }
