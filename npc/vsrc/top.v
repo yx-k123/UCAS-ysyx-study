@@ -7,6 +7,7 @@ module top (
 );
 
   import "DPI-C" function void npc_ebreak(input int unsigned pc, input int unsigned inst, input int unsigned a0);
+  import "DPI-C" function void trace_inst(input int pc, input int inst);
 
   reg [31:0] pc_r;
   wire [31:0] pc_next;
@@ -122,6 +123,7 @@ module top (
     if (rst) begin
       pc_r <= 32'h8000_0000;
     end else begin
+      trace_inst(pc_r, inst);
       if (is_ebreak) begin
         npc_ebreak(pc_r, inst, a0_data);
       end
