@@ -23,4 +23,10 @@ module regfile (
 
   assign a0_o = gpr[10];
 
+  import "DPI-C" function void set_gpr_ptr(input logic [31:0] a []);
+  
+  initial begin
+    set_gpr_ptr(gpr);
+  end
+
 endmodule
