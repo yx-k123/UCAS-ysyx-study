@@ -165,12 +165,20 @@ static const char *get_indent(void) {
 }
 
 void ftrace_call(vaddr_t pc, vaddr_t target) {
-  log_write("0x%08x: %scall [%s@0x%08x]\n", pc, get_indent(), get_func_name(target), target);
+  const char *indent = get_indent();
+  const char *name = get_func_name(target);
+  (void)indent;
+  (void)name;
+  log_write("0x%08x: %scall [%s@0x%08x]\n", pc, indent, name, target);
   call_depth++;
 }
 
 void ftrace_ret(vaddr_t pc) {
   call_depth--;
   if (call_depth < 0) call_depth = 0;
-  log_write("0x%08x: %sret [%s]\n", pc, get_indent(), get_func_name(pc));
+  const char *indent = get_indent();
+  const char *name = get_func_name(pc);
+  (void)indent;
+  (void)name;
+  log_write("0x%08x: %sret [%s]\n", pc, indent, name);
 }
