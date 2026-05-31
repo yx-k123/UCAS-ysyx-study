@@ -43,6 +43,8 @@ typedef void (*difftest_init_t)(int port);
 
 static bool g_difftest_enabled = false;
 static bool g_difftest_abort = false;
+static bool g_trace_enabled = true;
+static bool g_wave_enabled = false;
 static void *g_diff_handle = NULL;
 static difftest_memcpy_t ref_difftest_memcpy = NULL;
 static difftest_regcpy_t ref_difftest_regcpy = NULL;
@@ -62,6 +64,10 @@ static SymbolEntry syms[1024];
 static int sym_cnt = 0;
 
 static void init_ftrace(const char *elf_file) {
+  if (!g_trace_enabled) {
+    return;
+  }
+
   FILE *fp = fopen(elf_file, "rb");
   if (!fp) {
     printf("ftrace: failed to open %s\n", elf_file);
@@ -180,6 +186,8 @@ static bool expecting_ret_dest = false;
 static uint32_t caller_pc = 0;
 
 extern "C" void trace_inst(int pc, int inst) {
+  if (!g_trace_enabled) return;
+
   if (!capstone_initialized) {
     cs_open(CS_ARCH_RISCV, CS_MODE_RISCV32, &handle);
     capstone_initialized = true;
@@ -359,7 +367,9 @@ static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
 
 extern "C" int pmem_read(int raddr) {
   uint32_t addr = ((uint32_t)raddr) & ~0x3u;
-  printf("mtrace: [READ] addr=0x%08x\n", addr);
+  if (g_trace_enabled) {
+    printf("mtrace: [READ] addr=0x%08x\n", addr);
+  }
   if (addr == TIME_ADDR || addr == TIME_ADDR + 4) {
     uint64_t us = get_time_us();
     if (addr == TIME_ADDR) return (int)(us & 0xffffffffu);
@@ -370,7 +380,9 @@ extern "C" int pmem_read(int raddr) {
 
 extern "C" void pmem_write(int waddr, int wdata, char wmask) {
   uint32_t addr = ((uint32_t)waddr) & ~0x3u;
-  printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
+  if (g_trace_enabled) {
+    printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
+  }
   if (addr == UART_ADDR) {
     uint8_t mask = (uint8_t)wmask;
     uint32_t data = (uint32_t)wdata;
@@ -457,6 +469,14 @@ int main(int argc, char** argv) {
       diff_port = atoi(argv[i] + 7);
       continue;
     }
+    if (strncmp(argv[i], "--trace=", 8) == 0) {
+      g_trace_enabled = (atoi(argv[i] + 8) != 0);
+      continue;
+    }
+    if (strncmp(argv[i], "--wave=", 7) == 0) {
+      g_wave_enabled = (atoi(argv[i] + 7) != 0);
+      continue;
+    }
     int len = strlen(argv[i]);
     if (len > 4 && strcmp(argv[i] + len - 4, ".elf") == 0) {
       elf_arg = argv[i];
@@ -491,28 +511,33 @@ int main(int argc, char** argv) {
   Vtop* top = new Vtop{contextp};
   g_top = top;
 
-  Verilated::traceEverOn(true);
-  VerilatedVcdC* tfp = new VerilatedVcdC;
-  top->trace(tfp, 99);
-  const char* wave_path = "wave.vcd";
-  tfp->open(wave_path);
-  printf("wave dump: %s\n", wave_path);
+  VerilatedVcdC* tfp = NULL;
+  if (g_wave_enabled) {
+    Verilated::traceEverOn(true);
+    tfp = new VerilatedVcdC;
+    top->trace(tfp, 99);
+    const char* wave_path = "wave.vcd";
+    tfp->open(wave_path);
+    if (g_trace_enabled) {
+      printf("wave dump: %s\n", wave_path);
+    }
+  }
 
   top->clk = 0;
   top->rst = 1;
 
   // Reset for one cycle.
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
   top->clk = 1;
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
   top->clk = 0;
   top->rst = 0;
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
 
   if (diff_so != NULL) {
@@ -525,12 +550,14 @@ int main(int argc, char** argv) {
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
+
+    // itrace_record(top->debug_pc, top->debug_inst);
 
     top->clk = 1;
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
 
     if (g_difftest_enabled) {
@@ -553,7 +580,7 @@ int main(int argc, char** argv) {
 
     top->clk = 0;
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
 
     cycle++;
@@ -588,8 +615,10 @@ int main(int argc, char** argv) {
     g_diff_handle = NULL;
   }
 
-  tfp->close();
-  delete tfp;
+  if (tfp) {
+    tfp->close();
+    delete tfp;
+  }
   delete top;
   delete contextp;
   return exit_code;
