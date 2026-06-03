@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -21,10 +22,35 @@ static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static const uint32_t UART_ADDR = 0x10000000u;
 static const uint32_t TIME_ADDR = 0x10000010u;
 static uint8_t pmem[MEM_SIZE];
+static size_t g_img_size = 0;
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
+
+enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
+
+typedef struct {
+  uint32_t gpr[32];
+  uint32_t pc;
+} DiffCPUState;
+
+typedef void (*difftest_memcpy_t)(uint32_t addr, void *buf, size_t n, bool direction);
+typedef void (*difftest_regcpy_t)(void *dut, bool direction);
+typedef void (*difftest_exec_t)(uint64_t n);
+typedef void (*difftest_raise_intr_t)(uint64_t NO);
+typedef void (*difftest_init_t)(int port);
+
+static bool g_difftest_enabled = false;
+static bool g_difftest_abort = false;
+static bool g_trace_enabled = true;
+static bool g_wave_enabled = false;
+static void *g_diff_handle = NULL;
+static difftest_memcpy_t ref_difftest_memcpy = NULL;
+static difftest_regcpy_t ref_difftest_regcpy = NULL;
+static difftest_exec_t ref_difftest_exec = NULL;
+static difftest_raise_intr_t ref_difftest_raise_intr = NULL;
+static difftest_init_t ref_difftest_init = NULL;
 
 Vtop* g_top = NULL;
 
@@ -38,6 +64,10 @@ static SymbolEntry syms[1024];
 static int sym_cnt = 0;
 
 static void init_ftrace(const char *elf_file) {
+  if (!g_trace_enabled) {
+    return;
+  }
+
   FILE *fp = fopen(elf_file, "rb");
   if (!fp) {
     printf("ftrace: failed to open %s\n", elf_file);
@@ -156,6 +186,8 @@ static bool expecting_ret_dest = false;
 static uint32_t caller_pc = 0;
 
 extern "C" void trace_inst(int pc, int inst) {
+  if (!g_trace_enabled) return;
+
   if (!capstone_initialized) {
     cs_open(CS_ARCH_RISCV, CS_MODE_RISCV32, &handle);
     capstone_initialized = true;
@@ -217,6 +249,69 @@ extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
   cpu_gpr = (uint32_t *)svGetArrayPtr(r);
 }
 
+static void build_dut_state(DiffCPUState *s) {
+  assert(s != NULL);
+  assert(cpu_gpr != NULL);
+  for (int i = 0; i < 32; i++) {
+    s->gpr[i] = cpu_gpr[i];
+  }
+  s->gpr[0] = 0;
+  s->pc = g_top->debug_pc;
+}
+
+static bool difftest_check_regs(const DiffCPUState *ref, const DiffCPUState *dut) {
+  if (ref->pc != dut->pc) {
+    printf("difftest mismatch at pc: ref=0x%08x dut=0x%08x\n", ref->pc, dut->pc);
+    return false;
+  }
+  const char *regs[] = {
+    "$0", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
+    "s0", "s1", "a0", "a1", "a2", "a3", "a4", "a5",
+    "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7",
+    "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
+  };
+  for (int i = 0; i < 32; i++) {
+    if (ref->gpr[i] != dut->gpr[i]) {
+      printf("difftest mismatch at %s: ref=0x%08x dut=0x%08x, pc=0x%08x\n",
+             regs[i], ref->gpr[i], dut->gpr[i], dut->pc);
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool init_difftest(const char *so_file, int port, size_t img_size) {
+  g_diff_handle = dlopen(so_file, RTLD_LAZY);
+  if (g_diff_handle == NULL) {
+    printf("difftest: dlopen failed: %s\n", dlerror());
+    return false;
+  }
+
+  ref_difftest_memcpy = (difftest_memcpy_t)dlsym(g_diff_handle, "difftest_memcpy");
+  ref_difftest_regcpy = (difftest_regcpy_t)dlsym(g_diff_handle, "difftest_regcpy");
+  ref_difftest_exec = (difftest_exec_t)dlsym(g_diff_handle, "difftest_exec");
+  ref_difftest_raise_intr = (difftest_raise_intr_t)dlsym(g_diff_handle, "difftest_raise_intr");
+  ref_difftest_init = (difftest_init_t)dlsym(g_diff_handle, "difftest_init");
+  if (ref_difftest_memcpy == NULL || ref_difftest_regcpy == NULL ||
+      ref_difftest_exec == NULL || ref_difftest_raise_intr == NULL ||
+      ref_difftest_init == NULL) {
+    printf("difftest: dlsym failed: %s\n", dlerror());
+    return false;
+  }
+
+  ref_difftest_init(port);
+  (void)ref_difftest_raise_intr;
+  ref_difftest_memcpy(MEM_BASE, pmem, img_size, DIFFTEST_TO_REF);
+
+  DiffCPUState dut;
+  build_dut_state(&dut);
+  ref_difftest_regcpy(&dut, DIFFTEST_TO_REF);
+
+  g_difftest_enabled = true;
+  printf("difftest: enabled, ref=%s, port=%d\n", so_file, port);
+  return true;
+}
+
 void isa_reg_display() {
   const char *regs[] = {
     "$0", "ra", "sp", "gp", "tp", "t0", "t1", "t2",
@@ -272,7 +367,9 @@ static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
 
 extern "C" int pmem_read(int raddr) {
   uint32_t addr = ((uint32_t)raddr) & ~0x3u;
-  printf("mtrace: [READ] addr=0x%08x\n", addr);
+  if (g_trace_enabled) {
+    printf("mtrace: [READ] addr=0x%08x\n", addr);
+  }
   if (addr == TIME_ADDR || addr == TIME_ADDR + 4) {
     uint64_t us = get_time_us();
     if (addr == TIME_ADDR) return (int)(us & 0xffffffffu);
@@ -283,7 +380,9 @@ extern "C" int pmem_read(int raddr) {
 
 extern "C" void pmem_write(int waddr, int wdata, char wmask) {
   uint32_t addr = ((uint32_t)waddr) & ~0x3u;
-  printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
+  if (g_trace_enabled) {
+    printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
+  }
   if (addr == UART_ADDR) {
     uint8_t mask = (uint8_t)wmask;
     uint32_t data = (uint32_t)wdata;
@@ -326,6 +425,7 @@ static bool load_img(const char* img_path) {
   }
 
   printf("loaded image %s (%ld bytes)\n", img_path, size);
+  g_img_size = (size_t)size;
   return true;
 }
 
@@ -346,30 +446,64 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  const char *diff_so = NULL;
+  int diff_port = 1234;
+  const char *elf_arg = NULL;
+  bool has_halt_addr = false;
+  uint32_t halt_addr = 0;
+
+  for (int i = 2; i < argc; i++) {
+    if (strncmp(argv[i], "--diff=", 7) == 0) {
+      diff_so = argv[i] + 7;
+      continue;
+    }
+    if (strcmp(argv[i], "--diff") == 0) {
+      if (i + 1 >= argc) {
+        printf("missing argument for --diff\n");
+        return 1;
+      }
+      diff_so = argv[++i];
+      continue;
+    }
+    if (strncmp(argv[i], "--port=", 7) == 0) {
+      diff_port = atoi(argv[i] + 7);
+      continue;
+    }
+    if (strncmp(argv[i], "--trace=", 8) == 0) {
+      g_trace_enabled = (atoi(argv[i] + 8) != 0);
+      continue;
+    }
+    if (strncmp(argv[i], "--wave=", 7) == 0) {
+      g_wave_enabled = (atoi(argv[i] + 7) != 0);
+      continue;
+    }
+    int len = strlen(argv[i]);
+    if (len > 4 && strcmp(argv[i] + len - 4, ".elf") == 0) {
+      elf_arg = argv[i];
+      continue;
+    }
+    if (!has_halt_addr) {
+      if (!parse_u32_hex(argv[i], &halt_addr)) {
+        printf("invalid argument: %s\n", argv[i]);
+        return 1;
+      }
+      has_halt_addr = true;
+      continue;
+    }
+    printf("unknown argument: %s\n", argv[i]);
+    return 1;
+  }
+
   if (!load_img(argv[1])) {
     return 1;
   }
 
-  if (argc >= 3) {
-    int len = strlen(argv[2]);
-    if (len > 4 && strcmp(argv[2] + len - 4, ".elf") == 0) {
-      init_ftrace(argv[2]);
-      if (argc >= 4) {
-        uint32_t halt_addr = 0;
-        if (parse_u32_hex(argv[3], &halt_addr)) {
-          pmem_write_masked(halt_addr, 0x00100073u, 0x0f);
-          printf("patched ebreak at 0x%08x\n", halt_addr);
-        }
-      }
-    } else {
-      uint32_t halt_addr = 0;
-      if (!parse_u32_hex(argv[2], &halt_addr)) {
-        printf("invalid halt_addr or elf: %s\n", argv[2]);
-        return 1;
-      }
-      pmem_write_masked(halt_addr, 0x00100073u, 0x0f);
-      printf("patched ebreak at 0x%08x\n", halt_addr);
-    }
+  if (elf_arg != NULL) {
+    init_ftrace(elf_arg);
+  }
+  if (has_halt_addr) {
+    pmem_write_masked(halt_addr, 0x00100073u, 0x0f);
+    printf("patched ebreak at 0x%08x\n", halt_addr);
   }
 
   VerilatedContext* contextp = new VerilatedContext;
@@ -377,44 +511,76 @@ int main(int argc, char** argv) {
   Vtop* top = new Vtop{contextp};
   g_top = top;
 
-  Verilated::traceEverOn(true);
-  VerilatedVcdC* tfp = new VerilatedVcdC;
-  top->trace(tfp, 99);
-  const char* wave_path = "wave.vcd";
-  tfp->open(wave_path);
-  printf("wave dump: %s\n", wave_path);
+  VerilatedVcdC* tfp = NULL;
+  if (g_wave_enabled) {
+    Verilated::traceEverOn(true);
+    tfp = new VerilatedVcdC;
+    top->trace(tfp, 99);
+    const char* wave_path = "wave.vcd";
+    tfp->open(wave_path);
+    if (g_trace_enabled) {
+      printf("wave dump: %s\n", wave_path);
+    }
+  }
 
   top->clk = 0;
   top->rst = 1;
 
   // Reset for one cycle.
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
   top->clk = 1;
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
   top->clk = 0;
   top->rst = 0;
   top->eval();
-  tfp->dump(contextp->time());
+  if (tfp) tfp->dump(contextp->time());
   contextp->timeInc(1);
+
+  if (diff_so != NULL) {
+    if (!init_difftest(diff_so, diff_port, g_img_size)) {
+      return 1;
+    }
+  }
 
   int cycle = 0;
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
+
+    // itrace_record(top->debug_pc, top->debug_inst);
 
     top->clk = 1;
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
+
+    if (g_difftest_enabled) {
+      if (cpu_gpr == NULL) {
+        printf("difftest: cpu_gpr is not initialized\n");
+        g_difftest_abort = true;
+        break;
+      }
+      DiffCPUState ref, dut;
+      ref_difftest_exec(1);
+      ref_difftest_regcpy(&ref, DIFFTEST_TO_DUT);
+      build_dut_state(&dut);
+      if (!difftest_check_regs(&ref, &dut)) {
+        printf("difftest: failed at dut pc=0x%08x\n", dut.pc);
+        itrace_print(dut.pc);
+        g_difftest_abort = true;
+        break;
+      }
+    }
+
     top->clk = 0;
     top->eval();
-    tfp->dump(contextp->time());
+    if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
 
     cycle++;
@@ -435,12 +601,24 @@ int main(int argc, char** argv) {
       exit_code = (int)g_ebreak_a0;
     }
   } else {
+    if (g_difftest_abort) {
+      printf("simulation stopped by difftest mismatch\n");
+      exit_code = 1;
+    } else {
     printf("simulation stopped without ebreak\n");
     assert(0);
+    }
   }
 
-  tfp->close();
-  delete tfp;
+  if (g_diff_handle != NULL) {
+    dlclose(g_diff_handle);
+    g_diff_handle = NULL;
+  }
+
+  if (tfp) {
+    tfp->close();
+    delete tfp;
+  }
   delete top;
   delete contextp;
   return exit_code;

@@ -8,6 +8,10 @@ module wbu (
   input         wb_from_load_i,
   input         wb_from_pc4_i,
 
+  input         is_branch_i,
+  input         br_taken_i,
+  input  [31:0] br_target_i,
+  input         is_jal_i,
   input         is_jalr_i,
   input  [31:0] jalr_target_i,
 
@@ -24,6 +28,8 @@ module wbu (
                       wb_from_pc4_i  ? (pc_i + 32'd4) :
                                         alu_res_i;
 
-  assign pc_next_o = is_jalr_i ? jalr_target_i : (pc_i + 32'd4);
+  assign pc_next_o = (is_jal_i || (is_branch_i && br_taken_i)) ? br_target_i :
+                     is_jalr_i ? jalr_target_i :
+                     (pc_i + 32'd4);
 
 endmodule

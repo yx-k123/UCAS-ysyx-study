@@ -21,9 +21,13 @@ void putch(char ch) {
   mmio_write8(UART_ADDR, (uint8_t)ch);
 }
 
-void halt(int code) {
-  asm volatile("mv a0, %0; ebreak" : : "r"(code));
-  while (1);
+__attribute__((noreturn)) void halt(int code) {
+  // NPC captures `a0` when `ebreak` is executed:
+  //   a0 == 0  -> HIT GOOD TRAP
+  //   a0 != 0  -> HIT BAD TRAP
+  register int a0 asm("a0") = code;
+  asm volatile("ebreak" : : "r"(a0));
+  while (1) { }
 }
 
 void _trm_init() {

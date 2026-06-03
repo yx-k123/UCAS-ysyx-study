@@ -10,7 +10,7 @@ module regfile (
   output [31:0] a0_o
 );
 
-  reg [31:0] gpr [31:0]; 
+  bit [31:0] gpr [31:0];
 
   always @(posedge clk) begin
     if (we_i) begin

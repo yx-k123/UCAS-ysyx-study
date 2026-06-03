@@ -3,8 +3,7 @@ module lsu (
 
   input         is_load_i,
   input         is_store_i,
-  input         is_lbu_i,
-  input         is_sb_i,
+  input  [2:0]  funct3_i,
 
   input  [31:0] addr_i,
   input  [31:0] store_data_i,
@@ -13,7 +12,7 @@ module lsu (
 );
 
   import "DPI-C" function int pmem_read(input int raddr);
-  import "DPI-C" function void pmem_write(input int waddr, input int wdata, input [7:0] wmask);
+  import "DPI-C" function void pmem_write(input int waddr, input int wdata, input int wmask);
 
   wire [1:0] byte_off = addr_i[1:0];
   wire valid = is_load_i || is_store_i;
@@ -26,6 +25,7 @@ module lsu (
     (byte_off == 2'b01) ? dmem_rdata[15:8] :
     (byte_off == 2'b10) ? dmem_rdata[23:16] :
                           dmem_rdata[31:24];
+  wire [15:0] load_half = byte_off[1] ? dmem_rdata[31:16] : dmem_rdata[15:0];
 
   wire [31:0] sb_wdata =
     (byte_off == 2'b00) ? {24'b0, store_data_i[7:0]} :
@@ -39,8 +39,25 @@ module lsu (
     (byte_off == 2'b10) ? 4'b0100 :
                           4'b1000;
 
-  wire [31:0] dmem_wdata = is_sb_i ? sb_wdata : store_data_i;
-  wire [3:0] dmem_wmask = is_store_i ? (is_sb_i ? sb_wmask : 4'b1111) : 4'b0000;
+  wire is_lb  = is_load_i && (funct3_i == 3'b000);
+  wire is_lh  = is_load_i && (funct3_i == 3'b001);
+  wire is_lw  = is_load_i && (funct3_i == 3'b010);
+  wire is_lbu = is_load_i && (funct3_i == 3'b100);
+  wire is_lhu = is_load_i && (funct3_i == 3'b101);
+
+  wire is_sb = is_store_i && (funct3_i == 3'b000);
+  wire is_sh = is_store_i && (funct3_i == 3'b001);
+  wire is_sw = is_store_i && (funct3_i == 3'b010);
+
+  wire [31:0] sh_wdata = byte_off[1] ? {store_data_i[15:0], 16'b0} : {16'b0, store_data_i[15:0]};
+  wire [3:0] sh_wmask  = byte_off[1] ? 4'b1100 : 4'b0011;
+
+  wire [31:0] dmem_wdata = is_sb ? sb_wdata :
+                           is_sh ? sh_wdata :
+                           store_data_i;
+  wire [3:0] dmem_wmask = is_sb ? sb_wmask :
+                          is_sh ? sh_wmask :
+                          is_sw ? 4'b1111 : 4'b0000;
 
   always @(*) begin
     if (valid) begin
@@ -52,10 +69,15 @@ module lsu (
 
   always @(posedge clk) begin
     if (is_store_i) begin
-      pmem_write(aligned_addr, dmem_wdata, {4'b0, dmem_wmask});
+      pmem_write(aligned_addr, dmem_wdata, {28'b0, dmem_wmask});
     end
   end
 
-  assign load_data_o = is_lbu_i ? {24'b0, load_byte} : dmem_rdata;
+  assign load_data_o = is_lb  ? {{24{load_byte[7]}}, load_byte} :
+                       is_lbu ? {24'b0, load_byte} :
+                       is_lh  ? {{16{load_half[15]}}, load_half} :
+                       is_lhu ? {16'b0, load_half} :
+                       is_lw  ? dmem_rdata :
+                                32'b0;
 
 endmodule
