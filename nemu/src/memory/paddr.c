@@ -64,7 +64,7 @@ word_t paddr_read(paddr_t addr, int len) {
   }
 #ifdef CONFIG_MTRACE
   if (MTRACE_COND) {
-    log_write("pc = " FMT_WORD ", MTRACE: [READ]  addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, ret);
+    log_write("MTRACE: [READ] pc = " FMT_WORD ", addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, ret);
   }
 #endif
   return ret;
@@ -82,7 +82,7 @@ void paddr_write(paddr_t addr, int len, word_t data) {
   }
 #ifdef CONFIG_MTRACE
   if (MTRACE_COND) {
-    log_write("pc = " FMT_WORD ", MTRACE: [WRITE] addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, data);
+    log_write("MTRACE: [WRITE] pc = " FMT_WORD ", addr = " FMT_PADDR ", len = %d, data = " FMT_WORD "\n", cpu.pc, addr, len, data);
   }
 #endif
 }
