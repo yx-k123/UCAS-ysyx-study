@@ -8,6 +8,10 @@ Context* __am_irq_handle(Context *c) {
   if (user_handler) {
     Event ev = {0};
     switch (c->mcause) {
+      case 11:                         // ECALL from M-mode
+        c->mepc += 4;                  // 跳过 ecall 指令
+        ev.event = EVENT_YIELD;        // 告知用户程序这是一个 yield
+        break;
       default: ev.event = EVENT_ERROR; break;
     }
 
