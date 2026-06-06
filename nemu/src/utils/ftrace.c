@@ -169,7 +169,7 @@ void ftrace_call(vaddr_t pc, vaddr_t target) {
   const char *name = get_func_name(target);
   (void)indent;
   (void)name;
-  log_write("0x%08x: %scall [%s@0x%08x]\n", pc, indent, name, target);
+  log_write("Ftrace: 0x%08x: %scall [%s@0x%08x]\n", pc, indent, name, target);
   call_depth++;
 }
 
@@ -180,5 +180,5 @@ void ftrace_ret(vaddr_t pc) {
   const char *name = get_func_name(pc);
   (void)indent;
   (void)name;
-  log_write("0x%08x: %sret [%s]\n", pc, indent, name);
+  log_write("Ftrace: 0x%08x: %sret [%s]\n", pc, indent, name);
 }
