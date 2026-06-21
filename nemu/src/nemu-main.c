@@ -34,59 +34,8 @@ int main(int argc, char *argv[]) {
   init_monitor(argc, argv);
 #endif
 
-#ifdef TEST_EXPR
-  /* Try reading test expressions from tools/gen-expr/build/input. */
-  FILE *fp = fopen("tools/gen-expr/build/input", "r");
-  if (fp) {
-    char *line = NULL;
-    size_t len = 0;
-    while (getline(&line, &len, fp) != -1) {
-      char *p = line;
-      while (*p == ' ' || *p == '\t') p++;
-      if (*p == '\0' || *p == '\n') continue;
-
-      char *sep = strchr(p, ' ');
-      if (!sep) continue;
-      *sep = '\0';
-      unsigned long long expected = strtoull(p, NULL, 10);
-      char *expr_src = sep + 1;
-      char *nl = strchr(expr_src, '\n');
-      if (nl) *nl = '\0';
-
-      /* strip 'u' suffixes which expr() doesn't accept */
-      char buf[1024];
-      int bi = 0;
-      for (int i = 0; expr_src[i] && bi < (int)sizeof(buf) - 1; i++) {
-        if (expr_src[i] == 'u') continue;
-        buf[bi++] = expr_src[i];
-      }
-      buf[bi] = '\0';
-
-      bool ok = false;
-      word_t val = expr(buf, &ok);
-      unsigned long long got = (unsigned long long)val;
-      if (!ok) {
-        printf("expr parse failed: %s\n", buf);
-        free(line);
-        fclose(fp);
-        return 1;
-      }
-      if (got != expected) {
-        printf("mismatch: expected %llu, got %llu, expr=%s\n", expected, got, buf);
-        free(line);
-        fclose(fp);
-        return 1;
-      }
-    }
-    free(line);
-    fclose(fp);
-  }
-  printf("expr test passed!\n");
-
-#endif
-
   /* Start engine. */
   engine_start();
 
-  return 1;
+  return is_exit_status_bad();
 }
