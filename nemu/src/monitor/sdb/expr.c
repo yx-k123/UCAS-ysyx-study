@@ -21,7 +21,7 @@
 #include <regex.h>
 
 enum {
-  TK_NOTYPE = 256, TK_EQ, TK_NEQ, TK_AND, TK_NUM, TK_HEX, TK_REG, TK_DEREF
+  TK_NOTYPE = 256, TK_EQ, TK_NEQ, TK_AND, TK_NUM, TK_HEX, TK_REG, TK_DEREF, TK_NEG
 
   /* TODO: Add more token types */
 
@@ -166,7 +166,7 @@ int precedence(int type) {
     case TK_EQ: case TK_NEQ: return 2;
     case '+': case '-': return 3;
     case '*': case '/': return 4;
-    case TK_DEREF: return 5;
+    case TK_DEREF: case TK_NEG: return 5;
     default: return 6;
   }
 }
@@ -191,7 +191,7 @@ int find_main_operator(int p, int q) {
       else {
         int r_prec = precedence(tokens[i].type);
         int l_prec = precedence(tokens[op].type);
-        if (tokens[i].type == TK_DEREF) {
+        if (tokens[i].type == TK_DEREF || tokens[i].type == TK_NEG) {
           // right associative
           if (r_prec < l_prec) op = i; 
         } else {
@@ -237,6 +237,9 @@ word_t eval(int p, int q) {
       extern word_t vaddr_read(vaddr_t addr, int len);
       return vaddr_read(val, sizeof(word_t));
     }
+    if (op_type == TK_NEG) {
+      return -eval(op + 1, q);
+    }
 
     word_t val1 = eval(p, op - 1);
     word_t val2 = eval(op + 1, q);
@@ -269,6 +272,9 @@ word_t expr(char *e, bool *success) {
   for (int i = 0; i < nr_token; i ++) {
     if (tokens[i].type == '*' && (i == 0 || (tokens[i - 1].type != TK_NUM && tokens[i - 1].type != TK_HEX && tokens[i - 1].type != TK_REG && tokens[i - 1].type != ')'))) {
       tokens[i].type = TK_DEREF;
+    }
+    else if (tokens[i].type == '-' && (i == 0 || (tokens[i - 1].type != TK_NUM && tokens[i - 1].type != TK_HEX && tokens[i - 1].type != TK_REG && tokens[i - 1].type != ')'))) {
+      tokens[i].type = TK_NEG;
     }
   }
 
