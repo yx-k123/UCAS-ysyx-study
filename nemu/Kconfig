@@ -151,6 +151,44 @@ config ITRACE_COND
   string "Only trace instructions when the condition is true"
   default "true"
 
+config FTRACE
+  bool "Enable function tracer"
+  default y
+
+config FTRACE_COND
+  depends on FTRACE
+  string "Only trace functions when the condition is true"
+  default "true"
+
+config MTRACE
+  bool "Enable memory tracer"
+  default y
+
+config MTRACE_COND
+  depends on MTRACE
+  string "Only trace memory accesses when the condition is true"
+  default "true"
+
+config DTRACE
+  depends on TRACE && DEVICE
+  bool "Enable device tracer"
+  default y
+
+config DTRACE_COND
+  depends on DTRACE
+  string "Only trace device accesses when the condition is true"
+  default "true"
+
+config ETRACE
+  depends on TRACE
+  bool "Enable exception tracer"
+  default y
+
+config ETRACE_COND
+  depends on ETRACE
+  string "Only trace exceptions when the condition is true"
+  default "true"
+
 
 config DIFFTEST
   depends on TARGET_NATIVE_ELF

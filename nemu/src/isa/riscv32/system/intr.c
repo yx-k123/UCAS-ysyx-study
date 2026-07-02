@@ -19,8 +19,17 @@ word_t isa_raise_intr(word_t NO, vaddr_t epc) {
   /* TODO: Trigger an interrupt/exception with ``NO''.
    * Then return the address of the interrupt/exception vector.
    */
+  cpu.mepc = epc;
+  cpu.mcause = NO;
 
-  return 0;
+#ifdef CONFIG_ETRACE
+  if (ETRACE_COND) {
+    log_write("ETRACE: pc = " FMT_WORD ", cause = " FMT_WORD ", tvec = " FMT_WORD "\n",
+        epc, NO, cpu.mtvec);
+  }
+#endif
+  
+  return cpu.mtvec;
 }
 
 word_t isa_query_intr() {

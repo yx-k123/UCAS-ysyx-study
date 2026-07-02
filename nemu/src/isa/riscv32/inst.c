@@ -36,6 +36,16 @@ enum {
 #define immB() do { *imm = (SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1); } while(0)
 #define immJ() do { *imm = (SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1); } while(0)
 
+static word_t* get_csr(int csr_no) {
+  switch (csr_no) {
+    case 0x300: return &cpu.mstatus;
+    case 0x305: return &cpu.mtvec;
+    case 0x341: return &cpu.mepc;
+    case 0x342: return &cpu.mcause;
+    default: panic("unrecognized csr = 0x%03x", csr_no);
+  }
+}
+
 static void decode_operand(Decode *s, int *rd, word_t *src1, word_t *src2, word_t *imm, int type) {
   uint32_t i = s->isa.inst;
   int rs1 = BITS(i, 19, 15);
@@ -67,8 +77,16 @@ static int decode_exec(Decode *s) {
   INSTPAT_START();
   INSTPAT("??????? ????? ????? ??? ????? 00101 11", auipc  , U, R(rd) = s->pc + imm);
   INSTPAT("??????? ????? ????? ??? ????? 01101 11", lui    , U, R(rd) = imm);
-  INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal    , J, R(rd) = s->pc + 4; s->dnpc = s->pc + imm);
-  INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr   , I, R(rd) = s->pc + 4; s->dnpc = (src1 + imm) & ~1u);
+  INSTPAT("??????? ????? ????? ??? ????? 11011 11", jal    , J, R(rd) = s->pc + 4; s->dnpc = s->pc + imm;
+    IFDEF(CONFIG_FTRACE, if (rd == 1 || rd == 5) { void ftrace_call(vaddr_t pc, vaddr_t target); ftrace_call(s->pc, s->dnpc); })
+  );
+  INSTPAT("??????? ????? ????? 000 ????? 11001 11", jalr   , I, R(rd) = s->pc + 4; s->dnpc = (src1 + imm) & ~1u;
+    IFDEF(CONFIG_FTRACE, 
+      int rs1 = BITS(s->isa.inst, 19, 15);
+      if (rd == 1 || rd == 5) { void ftrace_call(vaddr_t pc, vaddr_t target); ftrace_call(s->pc, s->dnpc); }
+      else if (rd == 0 && (rs1 == 1 || rs1 == 5) && imm == 0) { void ftrace_ret(vaddr_t pc); ftrace_ret(s->pc); }
+    )
+  );
 
   INSTPAT("??????? ????? ????? 000 ????? 11000 11", beq    , B, if (src1 == src2) s->dnpc = s->pc + imm);
   INSTPAT("??????? ????? ????? 001 ????? 11000 11", bne    , B, if (src1 != src2) s->dnpc = s->pc + imm);
@@ -118,6 +136,26 @@ static int decode_exec(Decode *s) {
   INSTPAT("0000001 ????? ????? 111 ????? 01100 11", remu   , R, R(rd) = (src2 == 0) ? src1 : src1 % src2);
 
   INSTPAT("0000000 00001 00000 000 00000 11100 11", ebreak , N, NEMUTRAP(s->pc, R(10))); // R(10) is $a0
+  
+  // 自陷操作, AM 触发 yield 会借由 ecall (M-mode exception NO = 11)
+  INSTPAT("0000000 00000 00000 000 00000 11100 11", ecall, N, s->dnpc = isa_raise_intr(11, s->pc));
+  // 从异常状态恢复 PC 并返回原控制流
+  INSTPAT("0011000 00010 00000 000 00000 11100 11", mret , N, s->dnpc = cpu.mepc);
+  // csrrw指令：读/写 CSR（将原 CSR 读出到 rd，将 rs1 (对应 src1) 写入 CSR）
+  INSTPAT("??????? ????? ????? 001 ????? 11100 11", csrrw, I, {
+    word_t *csr = get_csr(BITS(s->isa.inst, 31, 20)); 
+    word_t old_val = *csr; 
+    *csr = src1; 
+    R(rd) = old_val;
+  });
+  // csrrs指令：读并设置 CSR（将原 CSR 读出到 rd，随后 csr |= rs1) 
+  INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, I, {
+    word_t *csr = get_csr(BITS(s->isa.inst, 31, 20));
+    word_t old_val = *csr;
+    *csr = old_val | src1;
+    R(rd) = old_val;
+  });
+
   INSTPAT("??????? ????? ????? ??? ????? ????? ??", inv    , N, INV(s->pc));
   INSTPAT_END();
 
