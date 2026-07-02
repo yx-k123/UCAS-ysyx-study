@@ -34,8 +34,6 @@ int main(int argc, char *argv[]) {
   init_monitor(argc, argv);
 #endif
 
-#ifdef TEST_EXPR
-  /* Try reading test expressions from tools/gen-expr/build/input. */
   FILE *fp = fopen("tools/gen-expr/build/input", "r");
   if (fp) {
     char *line = NULL;
@@ -82,8 +80,6 @@ int main(int argc, char *argv[]) {
     fclose(fp);
   }
   printf("expr test passed!\n");
-
-#endif
 
   /* Start engine. */
   engine_start();
