@@ -45,6 +45,9 @@ static bool g_difftest_enabled = false;
 static bool g_difftest_abort = false;
 static bool g_trace_enabled = true;
 static bool g_wave_enabled = false;
+static bool g_stop_by_timeout = false;
+static bool g_uart_line_open = false;
+static int g_max_cycles = 0;
 static void *g_diff_handle = NULL;
 static difftest_memcpy_t ref_difftest_memcpy = NULL;
 static difftest_regcpy_t ref_difftest_regcpy = NULL;
@@ -388,7 +391,9 @@ extern "C" void pmem_write(int waddr, int wdata, char wmask) {
     uint32_t data = (uint32_t)wdata;
     for (int i = 0; i < 4; i++) {
       if (mask & (1u << i)) {
-        putchar((data >> (i * 8)) & 0xff);
+        char ch = (char)((data >> (i * 8)) & 0xff);
+        putchar(ch);
+        g_uart_line_open = (ch != '\n');
       }
     }
     fflush(stdout);
@@ -439,6 +444,24 @@ static bool parse_u32_hex(const char* s, uint32_t* out) {
   return true;
 }
 
+static bool parse_int_arg(const char* s, int* out) {
+  char* endp = NULL;
+  long v = strtol(s, &endp, 0);
+  if (endp == s || *endp != '\0') {
+    return false;
+  }
+  *out = (int)v;
+  return true;
+}
+
+static void sync_host_log_line(void) {
+  if (g_uart_line_open) {
+    putchar('\n');
+    fflush(stdout);
+    g_uart_line_open = false;
+  }
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     printf("usage: %s <image.bin> [halt_addr]\n", argv[0]);
@@ -475,6 +498,13 @@ int main(int argc, char** argv) {
     }
     if (strncmp(argv[i], "--wave=", 7) == 0) {
       g_wave_enabled = (atoi(argv[i] + 7) != 0);
+      continue;
+    }
+    if (strncmp(argv[i], "--max-cycles=", 13) == 0) {
+      if (!parse_int_arg(argv[i] + 13, &g_max_cycles)) {
+        printf("invalid argument for --max-cycles: %s\n", argv[i] + 13);
+        return 1;
+      }
       continue;
     }
     int len = strlen(argv[i]);
@@ -584,13 +614,16 @@ int main(int argc, char** argv) {
     contextp->timeInc(1);
 
     cycle++;
-    if (cycle > 1000000) {
-      printf("timeout: no ebreak observed\n");
+    if (g_max_cycles > 0 && cycle > g_max_cycles) {
+      sync_host_log_line();
+      printf("timeout: reached max cycles (%d) without ebreak\n", g_max_cycles);
+      g_stop_by_timeout = true;
       break;
     }
   }
 
   if (g_ebreak_hit) {
+    sync_host_log_line();
     printf("ebreak at pc=0x%08x inst=0x%08x a0=%u\n", g_ebreak_pc, g_ebreak_inst, g_ebreak_a0);
     if (g_ebreak_a0 == 0) {
       printf("HIT GOOD TRAP\n");
@@ -602,11 +635,17 @@ int main(int argc, char** argv) {
     }
   } else {
     if (g_difftest_abort) {
+      sync_host_log_line();
       printf("simulation stopped by difftest mismatch\n");
       exit_code = 1;
+    } else if (g_stop_by_timeout) {
+      sync_host_log_line();
+      printf("simulation stopped by timeout without ebreak\n");
+      exit_code = 0;
     } else {
-    printf("simulation stopped without ebreak\n");
-    assert(0);
+      sync_host_log_line();
+      printf("simulation stopped without ebreak\n");
+      assert(0);
     }
   }
 

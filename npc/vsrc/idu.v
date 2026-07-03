@@ -9,6 +9,11 @@ module idu (
   output        op1_is_pc_o,
   output        op2_is_rs2_o,
   output [3:0]  alu_op_o,
+  output [11:0] csr_addr_o,
+  output        is_csrrw_o,
+  output        is_csrrs_o,
+  output        is_ecall_o,
+  output        is_mret_o,
 
   output        is_load_o,
   output        is_store_o,
@@ -21,7 +26,8 @@ module idu (
 
   output        wb_en_o,
   output        wb_from_load_o,
-  output        wb_from_pc4_o
+  output        wb_from_pc4_o,
+  output        wb_from_csr_o
 );
 
   wire [6:0] opcode = inst_i[6:0];
@@ -77,7 +83,17 @@ module idu (
   wire is_bltu = (opcode == 7'b1100011) && (funct3 == 3'b110);
   wire is_bgeu = (opcode == 7'b1100011) && (funct3 == 3'b111);
   wire is_jalr = (opcode == 7'b1100111) && (funct3 == 3'b000);
+  wire is_csrrw = (opcode == 7'b1110011) && (funct3 == 3'b001);
+  wire is_csrrs = (opcode == 7'b1110011) && (funct3 == 3'b010);
+  wire is_ecall = (inst_i == 32'h0000_0073);
+  wire is_mret = (inst_i == 32'h3020_0073);
   wire is_ebreak = (inst_i == 32'h0010_0073);
+
+  assign csr_addr_o = inst_i[31:20];
+  assign is_csrrw_o = is_csrrw;
+  assign is_csrrs_o = is_csrrs;
+  assign is_ecall_o = is_ecall;
+  assign is_mret_o = is_mret;
 
   assign op1_is_pc_o = is_auipc;
   assign op2_is_rs2_o = is_add || is_sub || is_sll || is_slt || is_sltu || is_xor || is_srl || is_sra || is_or || is_and
@@ -130,8 +146,10 @@ module idu (
 
   assign wb_en_o        = is_add || is_sub || is_sll || is_slt || is_sltu || is_xor || is_srl || is_sra || is_or || is_and
                        || is_addi || is_slli || is_slti || is_sltiu || is_xori || is_srli || is_srai || is_ori || is_andi
-                       || is_lui || is_auipc || is_lb || is_lh || is_lw || is_lbu || is_lhu || is_jal || is_jalr;
+                       || is_lui || is_auipc || is_lb || is_lh || is_lw || is_lbu || is_lhu || is_jal || is_jalr
+                       || is_csrrw || is_csrrs;
   assign wb_from_load_o = is_lb || is_lh || is_lw || is_lbu || is_lhu;
   assign wb_from_pc4_o  = is_jal || is_jalr;
+  assign wb_from_csr_o  = is_csrrw || is_csrrs;
 
 endmodule

@@ -15,6 +15,7 @@ LIB_CAPSTONE := $(NEMU_HOME)/tools/capstone/repo/libcapstone.so.5
 DIFF_SO ?= $(NEMU_HOME)/build/riscv32-nemu-interpreter-so
 TRACE ?= 1
 WAVE ?= 0
+NPC_ARGS ?=
 
 insert-arg: image
 	@python3 $(AM_HOME)/tools/insert-arg.py $(IMAGE).bin $(MAINARGS_MAX_LEN) $(MAINARGS_PLACEHOLDER) "$(mainargs)"
@@ -28,7 +29,7 @@ run: insert-arg
 	@if [ ! -d "$(NPC_HOME)" ]; then echo "NPC_HOME is invalid: $(NPC_HOME)"; exit 1; fi
 	@if ! command -v verilator >/dev/null 2>&1; then echo "verilator not found"; exit 1; fi
 	@verilator --trace --cc --exe --build --top-module top -CFLAGS "-O3 $(INC_CAPSTONE)" -LDFLAGS "$(LIB_CAPSTONE) -ldl -Wl,-rpath,$(NEMU_HOME)/tools/capstone/repo" -Mdir "$(NPC_HOME)/build/obj_dir" "$(NPC_HOME)/csrc/main.cpp" "$(NPC_HOME)"/vsrc/*.v
-	@"$(NPC_HOME)/build/obj_dir/Vtop" "$(IMAGE).bin" "$(IMAGE).elf" --trace=$(TRACE) --wave=$(WAVE)
+	@"$(NPC_HOME)/build/obj_dir/Vtop" "$(IMAGE).bin" "$(IMAGE).elf" --trace=$(TRACE) --wave=$(WAVE) $(NPC_ARGS)
 
 # run: insert-arg
 # 	@if [ ! -f "$(DIFF_SO)" ]; then echo "DIFF_SO not found: $(DIFF_SO)"; exit 1; fi
