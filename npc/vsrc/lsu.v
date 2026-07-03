@@ -1,18 +1,24 @@
+`include "npc_bus.vh"
+
 module lsu (
   input         clk,
-
-  input         is_load_i,
-  input         is_store_i,
-  input  [2:0]  funct3_i,
-
-  input  [31:0] addr_i,
-  input  [31:0] store_data_i,
-
-  output [31:0] load_data_o
+  input  [`EXU_WBU_BUS_W-1:0] ex_bus_i,
+  input         ex_valid_i,
+  output        ex_ready_o,
+  output [`EXU_WBU_BUS_W-1:0] mem_bus_o,
+  output [31:0] load_data_o,
+  output        mem_valid_o,
+  input         mem_ready_i
 );
 
   import "DPI-C" function int pmem_read(input int raddr);
   import "DPI-C" function void pmem_write(input int waddr, input int wdata, input int wmask);
+
+  wire is_load_i = ex_bus_i[`EXU_WBU_IS_LOAD];
+  wire is_store_i = ex_bus_i[`EXU_WBU_IS_STORE];
+  wire [2:0] funct3_i = ex_bus_i[`EXU_WBU_LSU_FUNCT3];
+  wire [31:0] addr_i = ex_bus_i[`EXU_WBU_ALU_RES];
+  wire [31:0] store_data_i = ex_bus_i[`EXU_WBU_RS2_DATA];
 
   wire [1:0] byte_off = addr_i[1:0];
   wire valid = is_load_i || is_store_i;
@@ -58,6 +64,7 @@ module lsu (
   wire [3:0] dmem_wmask = is_sb ? sb_wmask :
                           is_sh ? sh_wmask :
                           is_sw ? 4'b1111 : 4'b0000;
+  wire mem_fire = ex_valid_i && mem_ready_i;
 
   always @(*) begin
     if (valid) begin
@@ -68,11 +75,14 @@ module lsu (
   end
 
   always @(posedge clk) begin
-    if (is_store_i) begin
+    if (mem_fire && is_store_i) begin
       pmem_write(aligned_addr, dmem_wdata, {28'b0, dmem_wmask});
     end
   end
 
+  assign ex_ready_o = mem_ready_i;
+  assign mem_bus_o = ex_bus_i;
+  assign mem_valid_o = ex_valid_i;
   assign load_data_o = is_lb  ? {{24{load_byte[7]}}, load_byte} :
                        is_lbu ? {24'b0, load_byte} :
                        is_lh  ? {{16{load_half[15]}}, load_half} :
