@@ -104,6 +104,42 @@ module top (
   wire        mem_axi_rvalid;
   wire        mem_axi_rready;
 
+  wire [31:0] sram_axi_awaddr;
+  wire        sram_axi_awvalid;
+  wire        sram_axi_awready;
+  wire [31:0] sram_axi_wdata;
+  wire [3:0]  sram_axi_wstrb;
+  wire        sram_axi_wvalid;
+  wire        sram_axi_wready;
+  wire [1:0]  sram_axi_bresp;
+  wire        sram_axi_bvalid;
+  wire        sram_axi_bready;
+  wire [31:0] sram_axi_araddr;
+  wire        sram_axi_arvalid;
+  wire        sram_axi_arready;
+  wire [31:0] sram_axi_rdata;
+  wire [1:0]  sram_axi_rresp;
+  wire        sram_axi_rvalid;
+  wire        sram_axi_rready;
+
+  wire [31:0] uart_axi_awaddr;
+  wire        uart_axi_awvalid;
+  wire        uart_axi_awready;
+  wire [31:0] uart_axi_wdata;
+  wire [3:0]  uart_axi_wstrb;
+  wire        uart_axi_wvalid;
+  wire        uart_axi_wready;
+  wire [1:0]  uart_axi_bresp;
+  wire        uart_axi_bvalid;
+  wire        uart_axi_bready;
+  wire [31:0] uart_axi_araddr;
+  wire        uart_axi_arvalid;
+  wire        uart_axi_arready;
+  wire [31:0] uart_axi_rdata;
+  wire [1:0]  uart_axi_rresp;
+  wire        uart_axi_rvalid;
+  wire        uart_axi_rready;
+
   reg         debug_commit_r;
 
   assign pc_valid = ~rst;
@@ -248,7 +284,7 @@ module top (
     .mem_rready_o(mem_axi_rready)
   );
 
-  axi4lite_mem u_axi4lite_mem (
+  axi4lite_xbar u_axi4lite_xbar (
     .clk(clk),
     .rst(rst),
     .axi_awaddr_i(mem_axi_awaddr),
@@ -267,7 +303,85 @@ module top (
     .axi_rdata_o(mem_axi_rdata),
     .axi_rresp_o(mem_axi_rresp),
     .axi_rvalid_o(mem_axi_rvalid),
-    .axi_rready_i(mem_axi_rready)
+    .axi_rready_i(mem_axi_rready),
+    .sram_awaddr_o(sram_axi_awaddr),
+    .sram_awvalid_o(sram_axi_awvalid),
+    .sram_awready_i(sram_axi_awready),
+    .sram_wdata_o(sram_axi_wdata),
+    .sram_wstrb_o(sram_axi_wstrb),
+    .sram_wvalid_o(sram_axi_wvalid),
+    .sram_wready_i(sram_axi_wready),
+    .sram_bresp_i(sram_axi_bresp),
+    .sram_bvalid_i(sram_axi_bvalid),
+    .sram_bready_o(sram_axi_bready),
+    .sram_araddr_o(sram_axi_araddr),
+    .sram_arvalid_o(sram_axi_arvalid),
+    .sram_arready_i(sram_axi_arready),
+    .sram_rdata_i(sram_axi_rdata),
+    .sram_rresp_i(sram_axi_rresp),
+    .sram_rvalid_i(sram_axi_rvalid),
+    .sram_rready_o(sram_axi_rready),
+    .uart_awaddr_o(uart_axi_awaddr),
+    .uart_awvalid_o(uart_axi_awvalid),
+    .uart_awready_i(uart_axi_awready),
+    .uart_wdata_o(uart_axi_wdata),
+    .uart_wstrb_o(uart_axi_wstrb),
+    .uart_wvalid_o(uart_axi_wvalid),
+    .uart_wready_i(uart_axi_wready),
+    .uart_bresp_i(uart_axi_bresp),
+    .uart_bvalid_i(uart_axi_bvalid),
+    .uart_bready_o(uart_axi_bready),
+    .uart_araddr_o(uart_axi_araddr),
+    .uart_arvalid_o(uart_axi_arvalid),
+    .uart_arready_i(uart_axi_arready),
+    .uart_rdata_i(uart_axi_rdata),
+    .uart_rresp_i(uart_axi_rresp),
+    .uart_rvalid_i(uart_axi_rvalid),
+    .uart_rready_o(uart_axi_rready)
+  );
+
+  axi4lite_mem u_axi4lite_mem (
+    .clk(clk),
+    .rst(rst),
+    .axi_awaddr_i(sram_axi_awaddr),
+    .axi_awvalid_i(sram_axi_awvalid),
+    .axi_awready_o(sram_axi_awready),
+    .axi_wdata_i(sram_axi_wdata),
+    .axi_wstrb_i(sram_axi_wstrb),
+    .axi_wvalid_i(sram_axi_wvalid),
+    .axi_wready_o(sram_axi_wready),
+    .axi_bresp_o(sram_axi_bresp),
+    .axi_bvalid_o(sram_axi_bvalid),
+    .axi_bready_i(sram_axi_bready),
+    .axi_araddr_i(sram_axi_araddr),
+    .axi_arvalid_i(sram_axi_arvalid),
+    .axi_arready_o(sram_axi_arready),
+    .axi_rdata_o(sram_axi_rdata),
+    .axi_rresp_o(sram_axi_rresp),
+    .axi_rvalid_o(sram_axi_rvalid),
+    .axi_rready_i(sram_axi_rready)
+  );
+
+  axi4lite_uart u_axi4lite_uart (
+    .clk(clk),
+    .rst(rst),
+    .axi_awaddr_i(uart_axi_awaddr),
+    .axi_awvalid_i(uart_axi_awvalid),
+    .axi_awready_o(uart_axi_awready),
+    .axi_wdata_i(uart_axi_wdata),
+    .axi_wstrb_i(uart_axi_wstrb),
+    .axi_wvalid_i(uart_axi_wvalid),
+    .axi_wready_o(uart_axi_wready),
+    .axi_bresp_o(uart_axi_bresp),
+    .axi_bvalid_o(uart_axi_bvalid),
+    .axi_bready_i(uart_axi_bready),
+    .axi_araddr_i(uart_axi_araddr),
+    .axi_arvalid_i(uart_axi_arvalid),
+    .axi_arready_o(uart_axi_arready),
+    .axi_rdata_o(uart_axi_rdata),
+    .axi_rresp_o(uart_axi_rresp),
+    .axi_rvalid_o(uart_axi_rvalid),
+    .axi_rready_i(uart_axi_rready)
   );
 
   csrfile u_csrfile (
