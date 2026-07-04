@@ -1,4 +1,5 @@
 #include <am.h>
+#include <klib.h>
 #include <klib-macros.h>
 
 extern char _heap_start;
@@ -21,6 +22,24 @@ void putch(char ch) {
   mmio_write8(UART_ADDR, (uint8_t)ch);
 }
 
+static inline uint32_t read_mvendorid(void) {
+  uint32_t value;
+  asm volatile("csrr %0, mvendorid" : "=r"(value));
+  return value;
+}
+
+static inline uint32_t read_marchid(void) {
+  uint32_t value;
+  asm volatile("csrr %0, marchid" : "=r"(value));
+  return value;
+}
+
+static inline uint32_t read_mcycle(void) {
+  uint32_t value;
+  asm volatile("csrr %0, mcycle" : "=r"(value));
+  return value;
+}
+
 __attribute__((noreturn)) void halt(int code) {
   // NPC captures `a0` when `ebreak` is executed:
   //   a0 == 0  -> HIT GOOD TRAP
@@ -31,6 +50,14 @@ __attribute__((noreturn)) void halt(int code) {
 }
 
 void _trm_init() {
+  uint32_t mvendorid = read_mvendorid();
+  uint32_t marchid = read_marchid();
+  uint32_t cycle0 = read_mcycle();
+  uint32_t cycle1 = read_mcycle();
+  uint32_t cycle2 = read_mcycle();
+  printf("boot csr: mvendorid=0x%x marchid=0x%x mcycle=%u,%u,%u\n",
+      mvendorid, marchid, cycle0, cycle1, cycle2);
+
   int ret = main(mainargs);
   halt(ret);
 }
