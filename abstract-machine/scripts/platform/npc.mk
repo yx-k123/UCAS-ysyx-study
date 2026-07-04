@@ -17,11 +17,15 @@ TRACE ?= 1
 WAVE ?= 0
 NPC_ARGS ?=
 NPC_OPT := -O3
+VERILATOR_TRACE_FLAG :=
 
 RUN_ARGS := --trace=$(TRACE) --wave=$(WAVE) $(NPC_ARGS)
 ifeq ($(DIFF),1)
 NPC_OPT := -O0
 RUN_ARGS += --diff="$(DIFF_SO)"
+endif
+ifeq ($(WAVE),1)
+VERILATOR_TRACE_FLAG := --trace
 endif
 
 insert-arg: image
@@ -36,7 +40,7 @@ run: insert-arg
 	@if [ "$(DIFF)" = "1" ] && [ ! -f "$(DIFF_SO)" ]; then echo "DIFF_SO not found: $(DIFF_SO)"; exit 1; fi
 	@if [ ! -d "$(NPC_HOME)" ]; then echo "NPC_HOME is invalid: $(NPC_HOME)"; exit 1; fi
 	@if ! command -v verilator >/dev/null 2>&1; then echo "verilator not found"; exit 1; fi
-	@verilator --trace --cc --exe --build --top-module top -I"$(NPC_HOME)/vsrc" -CFLAGS "$(NPC_OPT) $(INC_CAPSTONE)" -LDFLAGS "$(LIB_CAPSTONE) -ldl -Wl,-rpath,$(NEMU_HOME)/tools/capstone/repo" -Mdir "$(NPC_HOME)/build/obj_dir" "$(NPC_HOME)/csrc/main.cpp" "$(NPC_HOME)"/vsrc/*.v
+	@verilator $(VERILATOR_TRACE_FLAG) --cc --exe --build --top-module top -I"$(NPC_HOME)/vsrc" -CFLAGS "$(NPC_OPT) $(INC_CAPSTONE)" -LDFLAGS "$(LIB_CAPSTONE) -ldl -Wl,-rpath,$(NEMU_HOME)/tools/capstone/repo" -Mdir "$(NPC_HOME)/build/obj_dir" "$(NPC_HOME)/csrc/main.cpp" "$(NPC_HOME)"/vsrc/*.v
 	@"$(NPC_HOME)/build/obj_dir/Vtop" "$(IMAGE).bin" "$(IMAGE).elf" $(RUN_ARGS)
 
 .PHONY: insert-arg run

@@ -54,7 +54,25 @@ module axi4lite_xbar (
   input  [31:0] uart_rdata_i,
   input  [1:0]  uart_rresp_i,
   input         uart_rvalid_i,
-  output        uart_rready_o
+  output        uart_rready_o,
+
+  output [31:0] clint_awaddr_o,
+  output        clint_awvalid_o,
+  input         clint_awready_i,
+  output [31:0] clint_wdata_o,
+  output [3:0]  clint_wstrb_o,
+  output        clint_wvalid_o,
+  input         clint_wready_i,
+  input  [1:0]  clint_bresp_i,
+  input         clint_bvalid_i,
+  output        clint_bready_o,
+  output [31:0] clint_araddr_o,
+  output        clint_arvalid_o,
+  input         clint_arready_i,
+  input  [31:0] clint_rdata_i,
+  input  [1:0]  clint_rresp_i,
+  input         clint_rvalid_i,
+  output        clint_rready_o
 );
 
   localparam [2:0] ST_IDLE    = 3'd0;
@@ -68,6 +86,7 @@ module axi4lite_xbar (
   localparam [1:0] TARGET_NONE = 2'd0;
   localparam [1:0] TARGET_SRAM = 2'd1;
   localparam [1:0] TARGET_UART = 2'd2;
+  localparam [1:0] TARGET_CLINT = 2'd3;
 
   localparam [1:0] AXI_RESP_OKAY   = 2'b00;
   localparam [1:0] AXI_RESP_DECERR = 2'b11;
@@ -92,10 +111,13 @@ module axi4lite_xbar (
 
   wire sram_ar_fire = sram_arvalid_o && sram_arready_i;
   wire uart_ar_fire = uart_arvalid_o && uart_arready_i;
+  wire clint_ar_fire = clint_arvalid_o && clint_arready_i;
   wire sram_aw_fire = sram_awvalid_o && sram_awready_i;
   wire uart_aw_fire = uart_awvalid_o && uart_awready_i;
+  wire clint_aw_fire = clint_awvalid_o && clint_awready_i;
   wire sram_w_fire = sram_wvalid_o && sram_wready_i;
   wire uart_w_fire = uart_wvalid_o && uart_wready_i;
+  wire clint_w_fire = clint_wvalid_o && clint_wready_i;
 
   wire [31:0] write_data_next = w_fire ? axi_wdata_i : write_data_r;
   wire [3:0]  write_strb_next = w_fire ? axi_wstrb_i : write_strb_r;
@@ -115,6 +137,14 @@ module axi4lite_xbar (
     end
   endfunction
 
+  function is_clint_addr;
+    input [31:0] addr;
+    begin
+      is_clint_addr = ({addr[31:2], 2'b00} == 32'h1000_0010) ||
+                      ({addr[31:2], 2'b00} == 32'h1000_0014);
+    end
+  endfunction
+
   function [1:0] decode_target;
     input [31:0] addr;
     begin
@@ -122,6 +152,8 @@ module axi4lite_xbar (
         decode_target = TARGET_SRAM;
       end else if (is_uart_addr(addr)) begin
         decode_target = TARGET_UART;
+      end else if (is_clint_addr(addr)) begin
+        decode_target = TARGET_CLINT;
       end else begin
         decode_target = TARGET_NONE;
       end
@@ -186,7 +218,8 @@ module axi4lite_xbar (
 
         ST_RD_REQ: begin
           if ((target_r == TARGET_SRAM && sram_ar_fire) ||
-              (target_r == TARGET_UART && uart_ar_fire)) begin
+              (target_r == TARGET_UART && uart_ar_fire) ||
+              (target_r == TARGET_CLINT && clint_ar_fire)) begin
             state_r <= ST_RD_RESP;
           end
         end
@@ -218,10 +251,17 @@ module axi4lite_xbar (
             if (uart_w_fire) begin
               wr_w_sent_r <= 1'b1;
             end
+          end else if (target_r == TARGET_CLINT) begin
+            if (clint_aw_fire) begin
+              wr_aw_sent_r <= 1'b1;
+            end
+            if (clint_w_fire) begin
+              wr_w_sent_r <= 1'b1;
+            end
           end
 
-          if ((wr_aw_sent_r || sram_aw_fire || uart_aw_fire) &&
-              (wr_w_sent_r || sram_w_fire || uart_w_fire)) begin
+          if ((wr_aw_sent_r || sram_aw_fire || uart_aw_fire || clint_aw_fire) &&
+              (wr_w_sent_r || sram_w_fire || uart_w_fire || clint_w_fire)) begin
             state_r <= ST_WR_RESP;
           end
         end
@@ -253,17 +293,22 @@ module axi4lite_xbar (
   assign axi_awready_o = !rst && (state_r == ST_IDLE) && !aw_seen_r;
   assign axi_wready_o = !rst && (state_r == ST_IDLE) && !w_seen_r;
   assign axi_bresp_o = (state_r == ST_WR_ERR) ? AXI_RESP_DECERR :
-                       (target_r == TARGET_UART) ? uart_bresp_i : sram_bresp_i;
+                       (target_r == TARGET_UART) ? uart_bresp_i :
+                       (target_r == TARGET_CLINT) ? clint_bresp_i : sram_bresp_i;
   assign axi_bvalid_o = (state_r == ST_WR_ERR) ? 1'b1 :
                         (state_r == ST_WR_RESP && target_r == TARGET_UART) ? uart_bvalid_i :
+                        (state_r == ST_WR_RESP && target_r == TARGET_CLINT) ? clint_bvalid_i :
                         (state_r == ST_WR_RESP && target_r == TARGET_SRAM) ? sram_bvalid_i : 1'b0;
   assign axi_arready_o = !rst && (state_r == ST_IDLE) && !aw_seen_r && !w_seen_r;
   assign axi_rdata_o = (state_r == ST_RD_ERR) ? err_rdata_r :
-                       (target_r == TARGET_UART) ? uart_rdata_i : sram_rdata_i;
+                       (target_r == TARGET_UART) ? uart_rdata_i :
+                       (target_r == TARGET_CLINT) ? clint_rdata_i : sram_rdata_i;
   assign axi_rresp_o = (state_r == ST_RD_ERR) ? AXI_RESP_DECERR :
-                       (target_r == TARGET_UART) ? uart_rresp_i : sram_rresp_i;
+                       (target_r == TARGET_UART) ? uart_rresp_i :
+                       (target_r == TARGET_CLINT) ? clint_rresp_i : sram_rresp_i;
   assign axi_rvalid_o = (state_r == ST_RD_ERR) ? 1'b1 :
                         (state_r == ST_RD_RESP && target_r == TARGET_UART) ? uart_rvalid_i :
+                        (state_r == ST_RD_RESP && target_r == TARGET_CLINT) ? clint_rvalid_i :
                         (state_r == ST_RD_RESP && target_r == TARGET_SRAM) ? sram_rvalid_i : 1'b0;
 
   assign sram_awaddr_o = write_addr_r;
@@ -285,5 +330,15 @@ module axi4lite_xbar (
   assign uart_araddr_o = read_addr_r;
   assign uart_arvalid_o = (state_r == ST_RD_REQ) && (target_r == TARGET_UART);
   assign uart_rready_o = (state_r == ST_RD_RESP) && (target_r == TARGET_UART) ? axi_rready_i : 1'b0;
+
+  assign clint_awaddr_o = write_addr_r;
+  assign clint_awvalid_o = (state_r == ST_WR_REQ) && (target_r == TARGET_CLINT) && !wr_aw_sent_r;
+  assign clint_wdata_o = write_data_r;
+  assign clint_wstrb_o = write_strb_r;
+  assign clint_wvalid_o = (state_r == ST_WR_REQ) && (target_r == TARGET_CLINT) && !wr_w_sent_r;
+  assign clint_bready_o = (state_r == ST_WR_RESP) && (target_r == TARGET_CLINT) ? axi_bready_i : 1'b0;
+  assign clint_araddr_o = read_addr_r;
+  assign clint_arvalid_o = (state_r == ST_RD_REQ) && (target_r == TARGET_CLINT);
+  assign clint_rready_o = (state_r == ST_RD_RESP) && (target_r == TARGET_CLINT) ? axi_rready_i : 1'b0;
 
 endmodule
