@@ -86,6 +86,24 @@ module top (
   wire        lsu_axi_rvalid;
   wire        lsu_axi_rready;
 
+  wire [31:0] mem_axi_awaddr;
+  wire        mem_axi_awvalid;
+  wire        mem_axi_awready;
+  wire [31:0] mem_axi_wdata;
+  wire [3:0]  mem_axi_wstrb;
+  wire        mem_axi_wvalid;
+  wire        mem_axi_wready;
+  wire [1:0]  mem_axi_bresp;
+  wire        mem_axi_bvalid;
+  wire        mem_axi_bready;
+  wire [31:0] mem_axi_araddr;
+  wire        mem_axi_arvalid;
+  wire        mem_axi_arready;
+  wire [31:0] mem_axi_rdata;
+  wire [1:0]  mem_axi_rresp;
+  wire        mem_axi_rvalid;
+  wire        mem_axi_rready;
+
   reg         debug_commit_r;
 
   assign pc_valid = ~rst;
@@ -177,7 +195,7 @@ module top (
     .axi_rready_o(lsu_axi_rready)
   );
 
-  axi4lite_mem u_axi4lite_mem (
+  axi4lite_arbiter u_axi4lite_arbiter (
     .clk(clk),
     .rst(rst),
     .ifu_araddr_i(ifu_axi_araddr),
@@ -210,7 +228,46 @@ module top (
     .lsu_rdata_o(lsu_axi_rdata),
     .lsu_rresp_o(lsu_axi_rresp),
     .lsu_rvalid_o(lsu_axi_rvalid),
-    .lsu_rready_i(lsu_axi_rready)
+    .lsu_rready_i(lsu_axi_rready),
+    .mem_awaddr_o(mem_axi_awaddr),
+    .mem_awvalid_o(mem_axi_awvalid),
+    .mem_awready_i(mem_axi_awready),
+    .mem_wdata_o(mem_axi_wdata),
+    .mem_wstrb_o(mem_axi_wstrb),
+    .mem_wvalid_o(mem_axi_wvalid),
+    .mem_wready_i(mem_axi_wready),
+    .mem_bresp_i(mem_axi_bresp),
+    .mem_bvalid_i(mem_axi_bvalid),
+    .mem_bready_o(mem_axi_bready),
+    .mem_araddr_o(mem_axi_araddr),
+    .mem_arvalid_o(mem_axi_arvalid),
+    .mem_arready_i(mem_axi_arready),
+    .mem_rdata_i(mem_axi_rdata),
+    .mem_rresp_i(mem_axi_rresp),
+    .mem_rvalid_i(mem_axi_rvalid),
+    .mem_rready_o(mem_axi_rready)
+  );
+
+  axi4lite_mem u_axi4lite_mem (
+    .clk(clk),
+    .rst(rst),
+    .axi_awaddr_i(mem_axi_awaddr),
+    .axi_awvalid_i(mem_axi_awvalid),
+    .axi_awready_o(mem_axi_awready),
+    .axi_wdata_i(mem_axi_wdata),
+    .axi_wstrb_i(mem_axi_wstrb),
+    .axi_wvalid_i(mem_axi_wvalid),
+    .axi_wready_o(mem_axi_wready),
+    .axi_bresp_o(mem_axi_bresp),
+    .axi_bvalid_o(mem_axi_bvalid),
+    .axi_bready_i(mem_axi_bready),
+    .axi_araddr_i(mem_axi_araddr),
+    .axi_arvalid_i(mem_axi_arvalid),
+    .axi_arready_o(mem_axi_arready),
+    .axi_rdata_o(mem_axi_rdata),
+    .axi_rresp_o(mem_axi_rresp),
+    .axi_rvalid_o(mem_axi_rvalid),
+    .axi_rready_i(mem_axi_rready)
   );
 
   csrfile u_csrfile (
