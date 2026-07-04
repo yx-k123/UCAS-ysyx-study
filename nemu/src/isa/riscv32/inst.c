@@ -36,13 +36,49 @@ enum {
 #define immB() do { *imm = (SEXT(BITS(i, 31, 31), 1) << 12) | (BITS(i, 7, 7) << 11) | (BITS(i, 30, 25) << 5) | (BITS(i, 11, 8) << 1); } while(0)
 #define immJ() do { *imm = (SEXT(BITS(i, 31, 31), 1) << 20) | (BITS(i, 19, 12) << 12) | (BITS(i, 20, 20) << 11) | (BITS(i, 30, 21) << 1); } while(0)
 
-static word_t* get_csr(int csr_no) {
+static word_t csr_read(int csr_no) {
   switch (csr_no) {
-    case 0x300: return &cpu.mstatus;
-    case 0x305: return &cpu.mtvec;
-    case 0x341: return &cpu.mepc;
-    case 0x342: return &cpu.mcause;
+    case 0x300: return cpu.mstatus;
+    case 0x305: return cpu.mtvec;
+    case 0x341: return cpu.mepc;
+    case 0x342: return cpu.mcause;
+    case 0xb00: return (word_t)(cpu.mcycle & 0xffffffffull);
+    case 0xb80: return (word_t)(cpu.mcycle >> 32);
+    case 0xf11: return 0x79737978u;
+    case 0xf12: return 26060188u;
     default: panic("unrecognized csr = 0x%03x", csr_no);
+  }
+}
+
+static void csr_write(int csr_no, word_t value, bool set_bits) {
+  switch (csr_no) {
+    case 0x300:
+      cpu.mstatus = set_bits ? (cpu.mstatus | value) : value;
+      break;
+    case 0x305:
+      cpu.mtvec = set_bits ? (cpu.mtvec | value) : value;
+      break;
+    case 0x341:
+      cpu.mepc = set_bits ? (cpu.mepc | value) : value;
+      break;
+    case 0x342:
+      cpu.mcause = set_bits ? (cpu.mcause | value) : value;
+      break;
+    case 0xb00: {
+      uint32_t lo = set_bits ? (((uint32_t)cpu.mcycle) | value) : value;
+      cpu.mcycle = (cpu.mcycle & 0xffffffff00000000ull) | lo;
+      break;
+    }
+    case 0xb80: {
+      uint32_t hi = set_bits ? (((uint32_t)(cpu.mcycle >> 32)) | value) : value;
+      cpu.mcycle = ((uint64_t)hi << 32) | (cpu.mcycle & 0xffffffffull);
+      break;
+    }
+    case 0xf11:
+    case 0xf12:
+      break;
+    default:
+      panic("unrecognized csr = 0x%03x", csr_no);
   }
 }
 
@@ -143,16 +179,16 @@ static int decode_exec(Decode *s) {
   INSTPAT("0011000 00010 00000 000 00000 11100 11", mret , N, s->dnpc = cpu.mepc);
   // csrrw指令：读/写 CSR（将原 CSR 读出到 rd，将 rs1 (对应 src1) 写入 CSR）
   INSTPAT("??????? ????? ????? 001 ????? 11100 11", csrrw, I, {
-    word_t *csr = get_csr(BITS(s->isa.inst, 31, 20)); 
-    word_t old_val = *csr; 
-    *csr = src1; 
+    int csr_no = BITS(s->isa.inst, 31, 20);
+    word_t old_val = csr_read(csr_no);
+    csr_write(csr_no, src1, false);
     R(rd) = old_val;
   });
   // csrrs指令：读并设置 CSR（将原 CSR 读出到 rd，随后 csr |= rs1) 
   INSTPAT("??????? ????? ????? 010 ????? 11100 11", csrrs, I, {
-    word_t *csr = get_csr(BITS(s->isa.inst, 31, 20));
-    word_t old_val = *csr;
-    *csr = old_val | src1;
+    int csr_no = BITS(s->isa.inst, 31, 20);
+    word_t old_val = csr_read(csr_no);
+    csr_write(csr_no, src1, true);
     R(rd) = old_val;
   });
 
@@ -166,5 +202,7 @@ static int decode_exec(Decode *s) {
 
 int isa_exec_once(Decode *s) {
   s->isa.inst = inst_fetch(&s->snpc, 4);
-  return decode_exec(s);
+  int ret = decode_exec(s);
+  cpu.mcycle++;
+  return ret;
 }

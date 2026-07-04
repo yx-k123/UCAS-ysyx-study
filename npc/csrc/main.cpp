@@ -15,6 +15,8 @@
 #include <capstone/capstone.h>
 #include <elf.h>
 
+#include "../../common/difftest_state.h"
+
 uint32_t *cpu_gpr = NULL;
 
 static const uint32_t MEM_BASE = 0x80000000u;
@@ -29,11 +31,6 @@ static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
 
 enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
-
-typedef struct {
-  uint32_t gpr[32];
-  uint32_t pc;
-} DiffCPUState;
 
 typedef void (*difftest_memcpy_t)(uint32_t addr, void *buf, size_t n, bool direction);
 typedef void (*difftest_regcpy_t)(void *dut, bool direction);
@@ -260,11 +257,42 @@ static void build_dut_state(DiffCPUState *s) {
   }
   s->gpr[0] = 0;
   s->pc = g_top->debug_pc;
+  s->mstatus = g_top->debug_mstatus;
+  s->mtvec = g_top->debug_mtvec;
+  s->mepc = g_top->debug_mepc;
+  s->mcause = g_top->debug_mcause;
+}
+
+static bool check_diff_word(const char *name, uint32_t ref, uint32_t dut, uint32_t pc) {
+  if (ref != dut) {
+    printf("difftest mismatch at %s: ref=0x%08x dut=0x%08x, pc=0x%08x\n",
+           name, ref, dut, pc);
+    return false;
+  }
+  return true;
+}
+
+static void difftest_sync_ref(const DiffCPUState *dut) {
+  ref_difftest_regcpy((void *)dut, DIFFTEST_TO_REF);
+}
+
+static bool is_volatile_csr_access(uint32_t inst) {
+  uint32_t opcode = inst & 0x7fu;
+  uint32_t funct3 = (inst >> 12) & 0x7u;
+  uint32_t csr = (inst >> 20) & 0xfffu;
+
+  if (opcode != 0x73u) {
+    return false;
+  }
+  if (funct3 != 0x1u && funct3 != 0x2u) {
+    return false;
+  }
+
+  return csr == 0xb00u || csr == 0xb80u;
 }
 
 static bool difftest_check_regs(const DiffCPUState *ref, const DiffCPUState *dut) {
-  if (ref->pc != dut->pc) {
-    printf("difftest mismatch at pc: ref=0x%08x dut=0x%08x\n", ref->pc, dut->pc);
+  if (!check_diff_word("pc", ref->pc, dut->pc, dut->pc)) {
     return false;
   }
   const char *regs[] = {
@@ -274,13 +302,14 @@ static bool difftest_check_regs(const DiffCPUState *ref, const DiffCPUState *dut
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
   };
   for (int i = 0; i < 32; i++) {
-    if (ref->gpr[i] != dut->gpr[i]) {
-      printf("difftest mismatch at %s: ref=0x%08x dut=0x%08x, pc=0x%08x\n",
-             regs[i], ref->gpr[i], dut->gpr[i], dut->pc);
+    if (!check_diff_word(regs[i], ref->gpr[i], dut->gpr[i], dut->pc)) {
       return false;
     }
   }
-  return true;
+  return check_diff_word("mstatus", ref->mstatus, dut->mstatus, dut->pc) &&
+         check_diff_word("mtvec", ref->mtvec, dut->mtvec, dut->pc) &&
+         check_diff_word("mepc", ref->mepc, dut->mepc, dut->pc) &&
+         check_diff_word("mcause", ref->mcause, dut->mcause, dut->pc);
 }
 
 static bool init_difftest(const char *so_file, int port, size_t img_size) {
@@ -308,7 +337,7 @@ static bool init_difftest(const char *so_file, int port, size_t img_size) {
 
   DiffCPUState dut;
   build_dut_state(&dut);
-  ref_difftest_regcpy(&dut, DIFFTEST_TO_REF);
+  difftest_sync_ref(&dut);
 
   g_difftest_enabled = true;
   printf("difftest: enabled, ref=%s, port=%d\n", so_file, port);
@@ -590,22 +619,30 @@ int main(int argc, char** argv) {
     if (tfp) tfp->dump(contextp->time());
     contextp->timeInc(1);
 
-    if (g_difftest_enabled) {
+    bool dut_committed = top->debug_commit;
+
+    if (g_difftest_enabled && dut_committed) {
       if (cpu_gpr == NULL) {
         printf("difftest: cpu_gpr is not initialized\n");
         g_difftest_abort = true;
         break;
       }
       DiffCPUState ref, dut;
-      ref_difftest_exec(1);
-      ref_difftest_regcpy(&ref, DIFFTEST_TO_DUT);
       build_dut_state(&dut);
+      ref_difftest_exec(1);
+      if (is_volatile_csr_access(top->debug_inst)) {
+        difftest_sync_ref(&dut);
+        goto difftest_done;
+      }
+      ref_difftest_regcpy(&ref, DIFFTEST_TO_DUT);
       if (!difftest_check_regs(&ref, &dut)) {
         printf("difftest: failed at dut pc=0x%08x\n", dut.pc);
         itrace_print(dut.pc);
         g_difftest_abort = true;
         break;
       }
+difftest_done:
+      ;
     }
 
     top->clk = 0;
