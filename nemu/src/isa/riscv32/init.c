@@ -35,6 +35,7 @@ static void restart() {
 
   /* for riscv32 diffset */
   cpu.mstatus = 0x1800;
+  cpu.mcycle = 0;
 }
 
 void init_isa() {

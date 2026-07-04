@@ -19,6 +19,8 @@
 #include <memory/paddr.h>
 #include <string.h>
 
+#include "../../../../common/difftest_state.h"
+
 __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction) {
   uint8_t *bytes = (uint8_t *)buf;
   if (direction == DIFFTEST_TO_REF) {
@@ -33,10 +35,23 @@ __EXPORT void difftest_memcpy(paddr_t addr, void *buf, size_t n, bool direction)
 }
 
 __EXPORT void difftest_regcpy(void *dut, bool direction) {
+  DiffCPUState *state = (DiffCPUState *)dut;
   if (direction == DIFFTEST_TO_REF) {
-    memcpy(&cpu, dut, sizeof(CPU_state));
+    memcpy(cpu.gpr, state->gpr, sizeof(state->gpr));
+    cpu.pc = state->pc;
+    cpu.mstatus = state->mstatus;
+    cpu.mtvec = state->mtvec;
+    cpu.mepc = state->mepc;
+    cpu.mcause = state->mcause;
+    cpu.gpr[0] = 0;
   } else {
-    memcpy(dut, &cpu, sizeof(CPU_state));
+    memcpy(state->gpr, cpu.gpr, sizeof(state->gpr));
+    state->gpr[0] = 0;
+    state->pc = cpu.pc;
+    state->mstatus = cpu.mstatus;
+    state->mtvec = cpu.mtvec;
+    state->mepc = cpu.mepc;
+    state->mcause = cpu.mcause;
   }
 }
 

@@ -1,41 +1,38 @@
 #include <am.h>
 
-static uint64_t boot_cycle = 0;
-static const uint64_t NPC_CLOCK_FREQ_HZ = 1000000ull;
+static uint64_t boot_mtime = 0;
 
-static inline uint32_t read_mcycle(void) {
-  uint32_t value;
-  asm volatile("csrr %0, mcycle" : "=r"(value));
-  return value;
+static const uintptr_t MTIME_ADDR = 0x10000010ul;
+static const uint64_t NPC_CLINT_FREQ_HZ = 1000000ull;
+
+static inline uint32_t mmio_read32(uintptr_t addr) {
+  return *(volatile uint32_t *)addr;
 }
 
-static inline uint32_t read_mcycleh(void) {
-  uint32_t value;
-  asm volatile("csrr %0, mcycleh" : "=r"(value));
-  return value;
-}
-
-static uint64_t read_cycle64(void) {
+static uint64_t read_mtime64(void) {
   uint32_t hi0 = 0;
   uint32_t hi1 = 0;
   uint32_t lo = 0;
 
   do {
-    hi0 = read_mcycleh();
-    lo = read_mcycle();
-    hi1 = read_mcycleh();
+    hi0 = mmio_read32(MTIME_ADDR + 4);
+    lo = mmio_read32(MTIME_ADDR + 0);
+    hi1 = mmio_read32(MTIME_ADDR + 4);
   } while (hi0 != hi1);
 
   return ((uint64_t)hi1 << 32) | lo;
 }
 
+static inline uint64_t mtime_to_us(uint64_t ticks) {
+  return ticks * 1000000ull / NPC_CLINT_FREQ_HZ;
+}
+
 void __am_timer_init() {
-  boot_cycle = read_cycle64();
+  boot_mtime = read_mtime64();
 }
 
 void __am_timer_uptime(AM_TIMER_UPTIME_T *uptime) {
-  uint64_t cycles = read_cycle64() - boot_cycle;
-  uptime->us = cycles / (NPC_CLOCK_FREQ_HZ / 1000000ull);
+  uptime->us = mtime_to_us(read_mtime64() - boot_mtime);
 }
 
 void __am_timer_rtc(AM_TIMER_RTC_T *rtc) {

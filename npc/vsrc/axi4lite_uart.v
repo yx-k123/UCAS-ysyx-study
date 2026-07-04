@@ -1,4 +1,4 @@
-module axi4lite_mem (
+module axi4lite_uart (
   input         clk,
   input         rst,
 
@@ -21,27 +21,18 @@ module axi4lite_mem (
   input         axi_rready_i
 );
 
-  import "DPI-C" function int pmem_read(input int raddr);
-  import "DPI-C" function void pmem_write(input int waddr, input int wdata, input int wmask);
+  localparam [1:0] ST_IDLE    = 2'd0;
+  localparam [1:0] ST_RD_RESP = 2'd1;
+  localparam [1:0] ST_WR_RESP = 2'd2;
 
-  localparam [2:0] ST_IDLE     = 3'd0;
-  localparam [2:0] ST_RD_WAIT  = 3'd1;
-  localparam [2:0] ST_RD_RESP  = 3'd2;
-  localparam [2:0] ST_WR_WAIT  = 3'd3;
-  localparam [2:0] ST_WR_RESP  = 3'd4;
-
-  localparam [4:0] MEM_FIXED_DELAY = 5'd5;
-  localparam       MEM_USE_LFSR = 1'b1;
   localparam [1:0] AXI_RESP_OKAY = 2'b00;
 
-  reg [2:0]  state_r;
-  reg [31:0] read_addr_r;
+  reg [1:0]  state_r;
+  reg [31:0] uart_reg_r;
   reg [31:0] rdata_r;
   reg [31:0] write_addr_r;
   reg [31:0] write_data_r;
   reg [3:0]  write_strb_r;
-  reg [4:0]  delay_r;
-  reg [7:0]  lfsr_r;
   reg        aw_seen_r;
   reg        w_seen_r;
 
@@ -51,40 +42,38 @@ module axi4lite_mem (
   wire w_fire = axi_wvalid_i && axi_wready_o;
   wire b_fire = axi_bvalid_o && axi_bready_i;
 
-  function [7:0] lfsr_next;
-    input [7:0] lfsr;
-    begin
-      lfsr_next = {lfsr[6:0], lfsr[7] ^ lfsr[5] ^ lfsr[4] ^ lfsr[3]};
-    end
-  endfunction
+  wire [31:0] write_data_next = w_fire ? axi_wdata_i : write_data_r;
+  wire [3:0]  write_strb_next = w_fire ? axi_wstrb_i : write_strb_r;
 
-  function [4:0] choose_delay;
-    input [7:0] lfsr;
+  function [31:0] apply_wstrb;
+    input [31:0] old_data;
+    input [31:0] new_data;
+    input [3:0]  wstrb;
     begin
-      choose_delay = MEM_USE_LFSR ? {1'b0, lfsr[3:0]} : MEM_FIXED_DELAY;
+      apply_wstrb = old_data;
+      if (wstrb[0]) apply_wstrb[7:0]   = new_data[7:0];
+      if (wstrb[1]) apply_wstrb[15:8]  = new_data[15:8];
+      if (wstrb[2]) apply_wstrb[23:16] = new_data[23:16];
+      if (wstrb[3]) apply_wstrb[31:24] = new_data[31:24];
     end
   endfunction
 
   always @(posedge clk) begin
     if (rst) begin
       state_r <= ST_IDLE;
-      read_addr_r <= 32'b0;
+      uart_reg_r <= 32'b0;
       rdata_r <= 32'b0;
       write_addr_r <= 32'b0;
       write_data_r <= 32'b0;
       write_strb_r <= 4'b0;
-      delay_r <= 5'b0;
-      lfsr_r <= 8'h1;
       aw_seen_r <= 1'b0;
       w_seen_r <= 1'b0;
     end else begin
       case (state_r)
         ST_IDLE: begin
           if (ar_fire) begin
-            read_addr_r <= axi_araddr_i;
-            delay_r <= choose_delay(lfsr_r);
-            lfsr_r <= lfsr_next(lfsr_r);
-            state_r <= ST_RD_WAIT;
+            rdata_r <= uart_reg_r;
+            state_r <= ST_RD_RESP;
           end else begin
             if (aw_fire) begin
               write_addr_r <= axi_awaddr_i;
@@ -98,36 +87,21 @@ module axi4lite_mem (
             end
 
             if ((aw_seen_r || aw_fire) && (w_seen_r || w_fire)) begin
-              delay_r <= choose_delay(lfsr_r);
-              lfsr_r <= lfsr_next(lfsr_r);
+              uart_reg_r <= apply_wstrb(uart_reg_r, write_data_next, write_strb_next);
+              if (write_strb_next[0]) $write("%c", write_data_next[7:0]);
+              if (write_strb_next[1]) $write("%c", write_data_next[15:8]);
+              if (write_strb_next[2]) $write("%c", write_data_next[23:16]);
+              if (write_strb_next[3]) $write("%c", write_data_next[31:24]);
               aw_seen_r <= 1'b0;
               w_seen_r <= 1'b0;
-              state_r <= ST_WR_WAIT;
+              state_r <= ST_WR_RESP;
             end
-          end
-        end
-
-        ST_RD_WAIT: begin
-          if (delay_r != 5'd0) begin
-            delay_r <= delay_r - 5'd1;
-          end else begin
-            rdata_r <= pmem_read(read_addr_r);
-            state_r <= ST_RD_RESP;
           end
         end
 
         ST_RD_RESP: begin
           if (r_fire) begin
             state_r <= ST_IDLE;
-          end
-        end
-
-        ST_WR_WAIT: begin
-          if (delay_r != 5'd0) begin
-            delay_r <= delay_r - 5'd1;
-          end else begin
-            pmem_write(write_addr_r, write_data_r, {28'b0, write_strb_r});
-            state_r <= ST_WR_RESP;
           end
         end
 

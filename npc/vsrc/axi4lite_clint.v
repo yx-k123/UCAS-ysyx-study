@@ -1,4 +1,4 @@
-module axi4lite_mem (
+module axi4lite_clint (
   input         clk,
   input         rst,
 
@@ -21,27 +21,23 @@ module axi4lite_mem (
   input         axi_rready_i
 );
 
-  import "DPI-C" function int pmem_read(input int raddr);
-  import "DPI-C" function void pmem_write(input int waddr, input int wdata, input int wmask);
+  import "DPI-C" function longint unsigned clint_mtime();
 
-  localparam [2:0] ST_IDLE     = 3'd0;
-  localparam [2:0] ST_RD_WAIT  = 3'd1;
-  localparam [2:0] ST_RD_RESP  = 3'd2;
-  localparam [2:0] ST_WR_WAIT  = 3'd3;
-  localparam [2:0] ST_WR_RESP  = 3'd4;
+  localparam [1:0] ST_IDLE    = 2'd0;
+  localparam [1:0] ST_RD_RESP = 2'd1;
+  localparam [1:0] ST_WR_RESP = 2'd2;
 
-  localparam [4:0] MEM_FIXED_DELAY = 5'd5;
-  localparam       MEM_USE_LFSR = 1'b1;
-  localparam [1:0] AXI_RESP_OKAY = 2'b00;
+  localparam [31:0] MTIME_LO_ADDR = 32'h1000_0010;
+  localparam [31:0] MTIME_HI_ADDR = 32'h1000_0014;
 
-  reg [2:0]  state_r;
+  localparam [1:0] AXI_RESP_OKAY   = 2'b00;
+  localparam [1:0] AXI_RESP_SLVERR = 2'b10;
+
+  reg [1:0]  state_r;
   reg [31:0] read_addr_r;
-  reg [31:0] rdata_r;
-  reg [31:0] write_addr_r;
-  reg [31:0] write_data_r;
-  reg [3:0]  write_strb_r;
-  reg [4:0]  delay_r;
-  reg [7:0]  lfsr_r;
+  reg [63:0] mtime_snapshot_r;
+  reg [1:0]  rresp_r;
+  reg [1:0]  bresp_r;
   reg        aw_seen_r;
   reg        w_seen_r;
 
@@ -51,83 +47,54 @@ module axi4lite_mem (
   wire w_fire = axi_wvalid_i && axi_wready_o;
   wire b_fire = axi_bvalid_o && axi_bready_i;
 
-  function [7:0] lfsr_next;
-    input [7:0] lfsr;
-    begin
-      lfsr_next = {lfsr[6:0], lfsr[7] ^ lfsr[5] ^ lfsr[4] ^ lfsr[3]};
-    end
-  endfunction
-
-  function [4:0] choose_delay;
-    input [7:0] lfsr;
-    begin
-      choose_delay = MEM_USE_LFSR ? {1'b0, lfsr[3:0]} : MEM_FIXED_DELAY;
-    end
-  endfunction
+  wire [31:0] aligned_araddr = {axi_araddr_i[31:2], 2'b00};
+  wire ar_is_lo = (aligned_araddr == MTIME_LO_ADDR);
+  wire ar_is_hi = (aligned_araddr == MTIME_HI_ADDR);
 
   always @(posedge clk) begin
     if (rst) begin
       state_r <= ST_IDLE;
       read_addr_r <= 32'b0;
-      rdata_r <= 32'b0;
-      write_addr_r <= 32'b0;
-      write_data_r <= 32'b0;
-      write_strb_r <= 4'b0;
-      delay_r <= 5'b0;
-      lfsr_r <= 8'h1;
+      mtime_snapshot_r <= 64'b0;
+      rresp_r <= AXI_RESP_OKAY;
+      bresp_r <= AXI_RESP_OKAY;
       aw_seen_r <= 1'b0;
       w_seen_r <= 1'b0;
     end else begin
       case (state_r)
         ST_IDLE: begin
           if (ar_fire) begin
-            read_addr_r <= axi_araddr_i;
-            delay_r <= choose_delay(lfsr_r);
-            lfsr_r <= lfsr_next(lfsr_r);
-            state_r <= ST_RD_WAIT;
+            read_addr_r <= aligned_araddr;
+            mtime_snapshot_r <= clint_mtime();
+            if (ar_is_lo) begin
+              rresp_r <= AXI_RESP_OKAY;
+            end else if (ar_is_hi) begin
+              rresp_r <= AXI_RESP_OKAY;
+            end else begin
+              rresp_r <= AXI_RESP_SLVERR;
+            end
+            state_r <= ST_RD_RESP;
           end else begin
             if (aw_fire) begin
-              write_addr_r <= axi_awaddr_i;
               aw_seen_r <= 1'b1;
+              bresp_r <= AXI_RESP_SLVERR;
             end
 
             if (w_fire) begin
-              write_data_r <= axi_wdata_i;
-              write_strb_r <= axi_wstrb_i;
               w_seen_r <= 1'b1;
             end
 
             if ((aw_seen_r || aw_fire) && (w_seen_r || w_fire)) begin
-              delay_r <= choose_delay(lfsr_r);
-              lfsr_r <= lfsr_next(lfsr_r);
               aw_seen_r <= 1'b0;
               w_seen_r <= 1'b0;
-              state_r <= ST_WR_WAIT;
+              state_r <= ST_WR_RESP;
             end
-          end
-        end
-
-        ST_RD_WAIT: begin
-          if (delay_r != 5'd0) begin
-            delay_r <= delay_r - 5'd1;
-          end else begin
-            rdata_r <= pmem_read(read_addr_r);
-            state_r <= ST_RD_RESP;
           end
         end
 
         ST_RD_RESP: begin
           if (r_fire) begin
             state_r <= ST_IDLE;
-          end
-        end
-
-        ST_WR_WAIT: begin
-          if (delay_r != 5'd0) begin
-            delay_r <= delay_r - 5'd1;
-          end else begin
-            pmem_write(write_addr_r, write_data_r, {28'b0, write_strb_r});
-            state_r <= ST_WR_RESP;
           end
         end
 
@@ -148,11 +115,13 @@ module axi4lite_mem (
 
   assign axi_awready_o = !rst && (state_r == ST_IDLE) && !aw_seen_r;
   assign axi_wready_o = !rst && (state_r == ST_IDLE) && !w_seen_r;
-  assign axi_bresp_o = AXI_RESP_OKAY;
+  assign axi_bresp_o = bresp_r;
   assign axi_bvalid_o = (state_r == ST_WR_RESP);
   assign axi_arready_o = !rst && (state_r == ST_IDLE) && !aw_seen_r && !w_seen_r;
-  assign axi_rdata_o = rdata_r;
-  assign axi_rresp_o = AXI_RESP_OKAY;
+  assign axi_rdata_o = (read_addr_r == MTIME_LO_ADDR) ? mtime_snapshot_r[31:0] :
+                       (read_addr_r == MTIME_HI_ADDR) ? mtime_snapshot_r[63:32] :
+                       32'b0;
+  assign axi_rresp_o = rresp_r;
   assign axi_rvalid_o = (state_r == ST_RD_RESP);
 
 endmodule

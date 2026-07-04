@@ -9,8 +9,10 @@ module csrfile (
   input  [31:0] trap_epc_i,
   input  [31:0] trap_cause_i,
   output [31:0] csr_rdata_o,
+  output [31:0] mstatus_o,
   output [31:0] mtvec_o,
-  output [31:0] mepc_o
+  output [31:0] mepc_o,
+  output [31:0] mcause_o
 );
 
   localparam [11:0] CSR_MSTATUS   = 12'h300;
@@ -89,7 +91,9 @@ module csrfile (
                        (csr_addr_i == CSR_MVENDORID) ? MVENDORID_VALUE  :
                        (csr_addr_i == CSR_MARCHID  ) ? MARCHID_VALUE    :
                                                         32'b0;
+  assign mstatus_o = mstatus_r;
   assign mtvec_o = mtvec_r;
   assign mepc_o = mepc_r;
+  assign mcause_o = mcause_r;
 
 endmodule

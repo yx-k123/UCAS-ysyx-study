@@ -10,17 +10,20 @@
 #include <svdpi.h>
 #include "Vtop.h"
 #include "verilated.h"
+#if VM_TRACE
 #include "verilated_vcd_c.h"
+#endif
 
 #include <capstone/capstone.h>
 #include <elf.h>
+
+#include "../../common/difftest_state.h"
 
 uint32_t *cpu_gpr = NULL;
 
 static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static const uint32_t UART_ADDR = 0x10000000u;
-static const uint32_t TIME_ADDR = 0x10000010u;
 static uint8_t pmem[MEM_SIZE];
 static size_t g_img_size = 0;
 static bool g_ebreak_hit = false;
@@ -29,11 +32,6 @@ static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
 
 enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
-
-typedef struct {
-  uint32_t gpr[32];
-  uint32_t pc;
-} DiffCPUState;
 
 typedef void (*difftest_memcpy_t)(uint32_t addr, void *buf, size_t n, bool direction);
 typedef void (*difftest_regcpy_t)(void *dut, bool direction);
@@ -244,8 +242,36 @@ extern "C" void trace_inst(int pc, int inst) {
 
 static uint64_t get_time_us() {
   struct timespec ts;
-  clock_gettime(CLOCK_REALTIME, &ts);
+  clock_gettime(CLOCK_MONOTONIC, &ts);
   return (uint64_t)ts.tv_sec * 1000000ull + (uint64_t)ts.tv_nsec / 1000ull;
+}
+
+#if VM_TRACE
+static inline void wave_dump(VerilatedVcdC* tfp, uint64_t time) {
+  if (tfp) {
+    tfp->dump(time);
+  }
+}
+
+static inline void wave_close(VerilatedVcdC* tfp) {
+  if (tfp) {
+    tfp->close();
+    delete tfp;
+  }
+}
+#else
+static inline void wave_dump(void* tfp, uint64_t time) {
+  (void)tfp;
+  (void)time;
+}
+
+static inline void wave_close(void* tfp) {
+  (void)tfp;
+}
+#endif
+
+extern "C" unsigned long long clint_mtime() {
+  return (unsigned long long)get_time_us();
 }
 
 extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
@@ -260,11 +286,42 @@ static void build_dut_state(DiffCPUState *s) {
   }
   s->gpr[0] = 0;
   s->pc = g_top->debug_pc;
+  s->mstatus = g_top->debug_mstatus;
+  s->mtvec = g_top->debug_mtvec;
+  s->mepc = g_top->debug_mepc;
+  s->mcause = g_top->debug_mcause;
+}
+
+static bool check_diff_word(const char *name, uint32_t ref, uint32_t dut, uint32_t pc) {
+  if (ref != dut) {
+    printf("difftest mismatch at %s: ref=0x%08x dut=0x%08x, pc=0x%08x\n",
+           name, ref, dut, pc);
+    return false;
+  }
+  return true;
+}
+
+static void difftest_sync_ref(const DiffCPUState *dut) {
+  ref_difftest_regcpy((void *)dut, DIFFTEST_TO_REF);
+}
+
+static bool is_volatile_csr_access(uint32_t inst) {
+  uint32_t opcode = inst & 0x7fu;
+  uint32_t funct3 = (inst >> 12) & 0x7u;
+  uint32_t csr = (inst >> 20) & 0xfffu;
+
+  if (opcode != 0x73u) {
+    return false;
+  }
+  if (funct3 != 0x1u && funct3 != 0x2u) {
+    return false;
+  }
+
+  return csr == 0xb00u || csr == 0xb80u;
 }
 
 static bool difftest_check_regs(const DiffCPUState *ref, const DiffCPUState *dut) {
-  if (ref->pc != dut->pc) {
-    printf("difftest mismatch at pc: ref=0x%08x dut=0x%08x\n", ref->pc, dut->pc);
+  if (!check_diff_word("pc", ref->pc, dut->pc, dut->pc)) {
     return false;
   }
   const char *regs[] = {
@@ -274,13 +331,14 @@ static bool difftest_check_regs(const DiffCPUState *ref, const DiffCPUState *dut
     "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"
   };
   for (int i = 0; i < 32; i++) {
-    if (ref->gpr[i] != dut->gpr[i]) {
-      printf("difftest mismatch at %s: ref=0x%08x dut=0x%08x, pc=0x%08x\n",
-             regs[i], ref->gpr[i], dut->gpr[i], dut->pc);
+    if (!check_diff_word(regs[i], ref->gpr[i], dut->gpr[i], dut->pc)) {
       return false;
     }
   }
-  return true;
+  return check_diff_word("mstatus", ref->mstatus, dut->mstatus, dut->pc) &&
+         check_diff_word("mtvec", ref->mtvec, dut->mtvec, dut->pc) &&
+         check_diff_word("mepc", ref->mepc, dut->mepc, dut->pc) &&
+         check_diff_word("mcause", ref->mcause, dut->mcause, dut->pc);
 }
 
 static bool init_difftest(const char *so_file, int port, size_t img_size) {
@@ -308,7 +366,7 @@ static bool init_difftest(const char *so_file, int port, size_t img_size) {
 
   DiffCPUState dut;
   build_dut_state(&dut);
-  ref_difftest_regcpy(&dut, DIFFTEST_TO_REF);
+  difftest_sync_ref(&dut);
 
   g_difftest_enabled = true;
   printf("difftest: enabled, ref=%s, port=%d\n", so_file, port);
@@ -372,11 +430,6 @@ extern "C" int pmem_read(int raddr) {
   uint32_t addr = ((uint32_t)raddr) & ~0x3u;
   if (g_trace_enabled) {
     printf("mtrace: [READ] addr=0x%08x\n", addr);
-  }
-  if (addr == TIME_ADDR || addr == TIME_ADDR + 4) {
-    uint64_t us = get_time_us();
-    if (addr == TIME_ADDR) return (int)(us & 0xffffffffu);
-    return (int)(us >> 32);
   }
   return (int)pmem_read32(addr);
 }
@@ -541,6 +594,7 @@ int main(int argc, char** argv) {
   Vtop* top = new Vtop{contextp};
   g_top = top;
 
+  #if VM_TRACE
   VerilatedVcdC* tfp = NULL;
   if (g_wave_enabled) {
     Verilated::traceEverOn(true);
@@ -552,22 +606,31 @@ int main(int argc, char** argv) {
       printf("wave dump: %s\n", wave_path);
     }
   }
+  #else
+  void* tfp = NULL;
+  if (g_wave_enabled) {
+    printf("wave dump is unavailable because NPC was built without --trace\n");
+    delete top;
+    delete contextp;
+    return 1;
+  }
+  #endif
 
   top->clk = 0;
   top->rst = 1;
 
   // Reset for one cycle.
   top->eval();
-  if (tfp) tfp->dump(contextp->time());
+  wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
   top->clk = 1;
   top->eval();
-  if (tfp) tfp->dump(contextp->time());
+  wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
   top->clk = 0;
   top->rst = 0;
   top->eval();
-  if (tfp) tfp->dump(contextp->time());
+  wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
 
   if (diff_so != NULL) {
@@ -580,14 +643,14 @@ int main(int argc, char** argv) {
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
     top->eval();
-    if (tfp) tfp->dump(contextp->time());
+    wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
 
     // itrace_record(top->debug_pc, top->debug_inst);
 
     top->clk = 1;
     top->eval();
-    if (tfp) tfp->dump(contextp->time());
+    wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
 
     bool dut_committed = top->debug_commit;
@@ -599,20 +662,26 @@ int main(int argc, char** argv) {
         break;
       }
       DiffCPUState ref, dut;
-      ref_difftest_exec(1);
-      ref_difftest_regcpy(&ref, DIFFTEST_TO_DUT);
       build_dut_state(&dut);
+      ref_difftest_exec(1);
+      if (is_volatile_csr_access(top->debug_inst)) {
+        difftest_sync_ref(&dut);
+        goto difftest_done;
+      }
+      ref_difftest_regcpy(&ref, DIFFTEST_TO_DUT);
       if (!difftest_check_regs(&ref, &dut)) {
         printf("difftest: failed at dut pc=0x%08x\n", dut.pc);
         itrace_print(dut.pc);
         g_difftest_abort = true;
         break;
       }
+difftest_done:
+      ;
     }
 
     top->clk = 0;
     top->eval();
-    if (tfp) tfp->dump(contextp->time());
+    wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
 
     cycle++;
@@ -656,10 +725,7 @@ int main(int argc, char** argv) {
     g_diff_handle = NULL;
   }
 
-  if (tfp) {
-    tfp->close();
-    delete tfp;
-  }
+  wave_close(tfp);
   delete top;
   delete contextp;
   return exit_code;
