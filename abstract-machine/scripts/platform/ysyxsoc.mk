@@ -2,7 +2,7 @@ AM_SRCS := riscv/ysyxsoc/start.S         riscv/ysyxsoc/trm.c          riscv/npc/
 
 CFLAGS    += -fdata-sections -ffunction-sections
 LDSCRIPTS += $(AM_HOME)/scripts/linker-ysyxsoc.ld
-LDFLAGS   += --defsym=_mrom_start=0x20000000 --defsym=_mrom_size=0x1000
+LDFLAGS   += --defsym=_flash_start=0x30000000 --defsym=_flash_size=0x00fff000
 LDFLAGS   += --defsym=_sram_start=0x0f000000 --defsym=_sram_size=0x2000
 LDFLAGS   += --defsym=_stack_size=0x1000
 LDFLAGS   += --gc-sections -e _start
@@ -14,6 +14,8 @@ CFLAGS += -DMAINARGS_MAX_LEN=$(MAINARGS_MAX_LEN) -DMAINARGS_PLACEHOLDER=$(MAINAR
 NPC_HOME ?= $(abspath $(AM_HOME)/../npc)
 NEMU_HOME ?= $(abspath $(AM_HOME)/../nemu)
 DIFF_SO ?= $(NEMU_HOME)/build/riscv32-nemu-interpreter-so
+NPC_BUILD_CXX ?= g++
+NPC_HOST_OPT ?= -O0
 TRACE ?= 0
 WAVE ?= 0
 MAX_CYCLES ?= 200000
@@ -30,12 +32,12 @@ insert-arg: image
 image: image-dep
 	@$(OBJDUMP) -d $(IMAGE).elf > $(IMAGE).txt
 	@echo + OBJCOPY "->" $(IMAGE_REL).bin
-	@$(OBJCOPY) -S --set-section-flags .bss=alloc,contents -O binary $(IMAGE).elf $(IMAGE).bin
+	@$(OBJCOPY) -S -O binary $(IMAGE).elf $(IMAGE).bin
 
 run: insert-arg
 	@if [ "$(DIFF)" = "1" ] && [ ! -f "$(DIFF_SO)" ]; then echo "DIFF_SO not found: $(DIFF_SO)"; exit 1; fi
 	@if [ ! -d "$(NPC_HOME)" ]; then echo "NPC_HOME is invalid: $(NPC_HOME)"; exit 1; fi
-	@$(MAKE) -s -C "$(NPC_HOME)" sim
+	@$(MAKE) -s -C "$(NPC_HOME)" sim CXX="$(NPC_BUILD_CXX)" HOST_OPT="$(NPC_HOST_OPT)"
 	@"$(NPC_HOME)/build/obj_dir/npc-sim" "$(IMAGE).bin" "$(IMAGE).elf" $(RUN_ARGS)
 
 .PHONY: insert-arg run

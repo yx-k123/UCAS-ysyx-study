@@ -1,7 +1,7 @@
 ENTRY(_start)
 
 MEMORY {
-  mrom (rx)  : ORIGIN = _mrom_start, LENGTH = _mrom_size
+  flash (rx) : ORIGIN = _flash_start, LENGTH = _flash_size
   sram (rwx) : ORIGIN = _sram_start, LENGTH = _sram_size
 }
 
@@ -11,25 +11,33 @@ PHDRS {
 }
 
 SECTIONS {
-  . = ORIGIN(mrom);
+  . = ORIGIN(flash);
 
   .text : ALIGN(4) {
     *(entry)
     *(.text*)
-  } > mrom :text
+  } > flash :text
 
   .rodata : ALIGN(4) {
     *(.rodata*)
     *(.srodata*)
-  } > mrom :text
+  } > flash :text
+
+  .ramtext : ALIGN(4) {
+    _ram_image_start = .;
+    *(.ramtext*)
+    _ramtext_end = ALIGN(4);
+  } > sram AT> flash :data
 
   .data : ALIGN(4) {
     _data_start = .;
     *(.data*)
     *(.sdata*)
     _data_end = ALIGN(4);
-  } > sram AT> mrom :data
+    _ram_image_end = .;
+  } > sram AT> flash :data
 
+  _ram_image_load_start = LOADADDR(.ramtext);
   _data_load_start = LOADADDR(.data);
   _data_load_end = LOADADDR(.data) + SIZEOF(.data);
 

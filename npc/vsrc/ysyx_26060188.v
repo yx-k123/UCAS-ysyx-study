@@ -484,7 +484,7 @@ module ysyx_26060188 (
 
   always @(posedge clock) begin
     if (reset) begin
-      pc_r <= 32'h2000_0000;
+      pc_r <= 32'h3000_0000;
       last_wb_valid_r <= 1'b0;
       last_wb_rd_r <= 5'd0;
       debug_commit_r <= 1'b0;

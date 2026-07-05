@@ -6,6 +6,9 @@ int main(const char *args);
 
 extern char _heap_start;
 extern char _heap_end;
+extern char _ram_image_load_start;
+extern char _ram_image_start;
+extern char _ram_image_end;
 extern char _data_load_start;
 extern char _data_start;
 extern char _data_end;
@@ -38,9 +41,9 @@ static inline uint8_t mmio_read8(uintptr_t addr) {
 }
 
 static void init_ram_sections(void) {
-  uint8_t *src = (uint8_t *)&_data_load_start;
-  uint8_t *dst = (uint8_t *)&_data_start;
-  while (dst < (uint8_t *)&_data_end) {
+  uint8_t *src = (uint8_t *)&_ram_image_load_start;
+  uint8_t *dst = (uint8_t *)&_ram_image_start;
+  while (dst < (uint8_t *)&_ram_image_end) {
     *dst++ = *src++;
   }
 
@@ -55,6 +58,22 @@ static void uart_init(void) {
   mmio_write8(UART_ADDR + UART_REG_DLM, (uint8_t)(UART_DIVISOR >> 8));
   mmio_write8(UART_ADDR + UART_REG_LCR, UART_LCR_8N1);
   mmio_write8(UART_ADDR + UART_REG_FCR, UART_FCR_CLEAR_FIFO);
+}
+
+static inline uint32_t read_mvendorid(void) {
+  uint32_t value;
+  asm volatile("csrr %0, mvendorid" : "=r"(value));
+  return value;
+}
+
+static inline uint32_t read_marchid(void) {
+  uint32_t value;
+  asm volatile("csrr %0, marchid" : "=r"(value));
+  return value;
+}
+
+static void print_npc_identity(void) {
+  printf("mvendorid=0x%x marchid=%u\n", read_mvendorid(), read_marchid());
 }
 
 void putch(char ch) {
@@ -72,6 +91,7 @@ __attribute__((noreturn)) void halt(int code) {
 void _trm_init() {
   init_ram_sections();
   uart_init();
+  print_npc_identity();
   int ret = main(mainargs);
   halt(ret);
 }

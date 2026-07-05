@@ -28,6 +28,11 @@ static const uint32_t MROM_SIZE = 0x00001000u;
 static const uint32_t SRAM_BASE = 0x0f000000u;
 static const uint32_t SRAM_SIZE = 0x00002000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
+static const uint32_t FLASH_STORAGE_SIZE = 0x01000000u;  // 16 MiB
+static const uint32_t FLASH_TEST_REGION_OFFSET = FLASH_STORAGE_SIZE - 0x00001000u;
+static const uint32_t FLASH_TEST_DATA_OFFSET = FLASH_TEST_REGION_OFFSET + 0x00000000u;
+static const uint32_t FLASH_CHAR_TEST_OFFSET = FLASH_TEST_REGION_OFFSET + 0x00000100u;
+static const uint32_t FLASH_PROGRAM_SIZE_LIMIT = FLASH_TEST_REGION_OFFSET;
 static const int RESET_CYCLES = 16;
 static uint8_t pmem[MEM_SIZE];
 static uint8_t g_sram_init[SRAM_SIZE];
@@ -71,6 +76,42 @@ typedef struct {
 
 static SymbolEntry syms[1024];
 static int sym_cnt = 0;
+
+static void flash_store32(uint32_t off, uint32_t value) {
+  assert(off + 4 <= FLASH_STORAGE_SIZE);
+  for (int i = 0; i < 4; i++) {
+    g_flash_img[off + (uint32_t)i] = (uint8_t)((value >> (i * 8)) & 0xffu);
+  }
+}
+
+static void init_flash_contents() {
+  static const uint32_t kFlashWords[] = {
+    0x12345678u,
+    0xdeadbeefu,
+    0x0badc0deu,
+    0x5a5aa5a5u,
+  };
+  static const uint8_t kFlashBytes[] = {
+    0x11u, 0x22u, 0x33u, 0x44u, 0xaau, 0x55u, 0xccu, 0x33u,
+  };
+  static const uint8_t kCharTestImage[] = {
+    0xb7u, 0x07u, 0x00u, 0x10u,
+    0x13u, 0x07u, 0x10u, 0x04u,
+    0x23u, 0x80u, 0xe7u, 0x00u,
+    0x6fu, 0x00u, 0x00u, 0x00u,
+  };
+
+  g_flash_img.assign(FLASH_STORAGE_SIZE, 0);
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashWords) / sizeof(kFlashWords[0])); i++) {
+    flash_store32(FLASH_TEST_DATA_OFFSET + i * 4, kFlashWords[i]);
+  }
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashBytes) / sizeof(kFlashBytes[0])); i++) {
+    g_flash_img[FLASH_TEST_DATA_OFFSET + 0x10u + i] = kFlashBytes[i];
+  }
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kCharTestImage) / sizeof(kCharTestImage[0])); i++) {
+    g_flash_img[FLASH_CHAR_TEST_OFFSET + i] = kCharTestImage[i];
+  }
+}
 
 static void init_ftrace(const char *elf_file) {
   if (!g_trace_enabled) {
@@ -432,6 +473,10 @@ static inline bool in_pmem(uint32_t addr) {
   return addr >= MEM_BASE && addr + 3 < MEM_BASE + MEM_SIZE;
 }
 
+static inline bool in_flash(uint32_t addr) {
+  return addr >= FLASH_BASE && addr + 3 < FLASH_BASE + FLASH_STORAGE_SIZE;
+}
+
 static uint32_t pmem_read32(uint32_t addr) {
   if (!in_pmem(addr)) {
     return 0;
@@ -457,6 +502,42 @@ static void pmem_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
   if (wmask & 0x2) pmem[off + 1] = (data >> 8) & 0xff;
   if (wmask & 0x4) pmem[off + 2] = (data >> 16) & 0xff;
   if (wmask & 0x8) pmem[off + 3] = (data >> 24) & 0xff;
+}
+
+static void flash_write_masked(uint32_t addr, uint32_t data, uint8_t wmask) {
+  if (!in_flash(addr)) {
+    printf("flash write out of range: 0x%08x\n", addr);
+    if (g_top) {
+      itrace_print(g_top->debug_pc);
+    }
+    assert(0);
+    return;
+  }
+  uint32_t off = addr - FLASH_BASE;
+  if (wmask & 0x1) g_flash_img[off + 0] = (data >> 0) & 0xff;
+  if (wmask & 0x2) g_flash_img[off + 1] = (data >> 8) & 0xff;
+  if (wmask & 0x4) g_flash_img[off + 2] = (data >> 16) & 0xff;
+  if (wmask & 0x8) g_flash_img[off + 3] = (data >> 24) & 0xff;
+}
+
+static void patch_image_word(uint32_t addr, uint32_t data, uint8_t wmask) {
+  if (in_pmem(addr)) {
+    pmem_write_masked(addr, data, wmask);
+  } else if (in_flash(addr)) {
+    flash_write_masked(addr, data, wmask);
+  } else if (addr >= MROM_BASE && addr + 3 < MROM_BASE + MROM_SIZE) {
+    uint32_t off = addr - MROM_BASE;
+    if (off + 4 > g_mrom_img.size()) {
+      g_mrom_img.resize(off + 4, 0);
+    }
+    if (wmask & 0x1) g_mrom_img[off + 0] = (data >> 0) & 0xff;
+    if (wmask & 0x2) g_mrom_img[off + 1] = (data >> 8) & 0xff;
+    if (wmask & 0x4) g_mrom_img[off + 2] = (data >> 16) & 0xff;
+    if (wmask & 0x8) g_mrom_img[off + 3] = (data >> 24) & 0xff;
+  } else {
+    printf("cannot patch image at 0x%08x\n", addr);
+    assert(0);
+  }
 }
 
 extern "C" int pmem_read(int raddr) {
@@ -487,8 +568,9 @@ static bool load_img(const char* img_path) {
     return false;
   }
   long size = ftell(fp);
-  if (size < 0 || (uint32_t)size > MEM_SIZE) {
-    printf("image too large: %ld bytes\n", size);
+  if (size < 0 || (uint32_t)size > FLASH_PROGRAM_SIZE_LIMIT) {
+    printf("image too large for flash boot: %ld bytes (limit %u)\n",
+           size, FLASH_PROGRAM_SIZE_LIMIT);
     fclose(fp);
     return false;
   }
@@ -496,16 +578,12 @@ static bool load_img(const char* img_path) {
 
   memset(pmem, 0, sizeof(pmem));
   memset(g_sram_init, 0, sizeof(g_sram_init));
-  g_flash_img.assign((size_t)size, 0);
-  g_mrom_img.assign((size_t)size, 0);
-  size_t n = fread(pmem, 1, (size_t)size, fp);
-  rewind(fp);
-  size_t m = fread(g_flash_img.data(), 1, (size_t)size, fp);
-  rewind(fp);
-  size_t k = fread(g_mrom_img.data(), 1, (size_t)size, fp);
+  g_mrom_img.clear();
+  init_flash_contents();
+  size_t n = fread(g_flash_img.data(), 1, (size_t)size, fp);
   fclose(fp);
-  if (n != (size_t)size || m != (size_t)size || k != (size_t)size) {
-    printf("failed to read full image, got pmem=%zu flash=%zu mrom=%zu bytes\n", n, m, k);
+  if (n != (size_t)size) {
+    printf("failed to read full image, got flash=%zu bytes\n", n);
     return false;
   }
 
@@ -535,11 +613,9 @@ static bool parse_int_arg(const char* s, int* out) {
 }
 
 static void sync_host_log_line(void) {
-  if (g_uart_line_open) {
-    putchar('\n');
-    fflush(stdout);
-    g_uart_line_open = false;
-  }
+  putchar('\n');
+  fflush(stdout);
+  g_uart_line_open = false;
 }
 
 int main(int argc, char** argv) {
@@ -612,8 +688,12 @@ int main(int argc, char** argv) {
     init_ftrace(elf_arg);
   }
   if (has_halt_addr) {
-    pmem_write_masked(halt_addr, 0x00100073u, 0x0f);
+    patch_image_word(halt_addr, 0x00100073u, 0x0f);
     printf("patched ebreak at 0x%08x\n", halt_addr);
+  }
+  if (diff_so != NULL) {
+    printf("difftest: disabled for flash boot on ysyxSoC (reference flash model is unavailable)\n");
+    diff_so = NULL;
   }
 
   VerilatedContext* contextp = new VerilatedContext;
@@ -673,6 +753,7 @@ int main(int argc, char** argv) {
   }
 
   int cycle = 0;
+  uint64_t committed = 0;
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
     top->eval();
@@ -687,6 +768,9 @@ int main(int argc, char** argv) {
     contextp->timeInc(1);
 
     bool dut_committed = top->debug_commit;
+    if (dut_committed) {
+      committed++;
+    }
 
     if (g_difftest_enabled && dut_committed) {
       if (cpu_gpr == NULL) {
@@ -720,7 +804,13 @@ difftest_done:
     cycle++;
     if (g_max_cycles > 0 && cycle > g_max_cycles) {
       sync_host_log_line();
-      printf("timeout: reached max cycles (%d) without ebreak\n", g_max_cycles);
+      printf("timeout: reached max cycles (%d) without ebreak, pc=0x%08x inst=0x%08x commits=%llu",
+             g_max_cycles, top->debug_pc, top->debug_inst,
+             (unsigned long long)committed);
+      if (sym_cnt > 0) {
+        printf(" (%s)", find_func_name(top->debug_pc));
+      }
+      printf("\n");
       g_stop_by_timeout = true;
       break;
     }

@@ -1,7 +1,8 @@
 VERILATOR ?= verilator
-CXX := g++-12
+CXX ?= g++-12
 RISCV_CC ?= riscv64-linux-gnu-gcc
 RISCV_OBJCOPY ?= riscv64-linux-gnu-objcopy
+HOST_OPT ?= -O2
 BUILD_DIR := build
 OBJ_DIR := $(BUILD_DIR)/obj_dir
 SIM_BIN := npc-sim
@@ -9,7 +10,7 @@ TEST_DIR := tests
 CHAR_TEST_SRC := $(TEST_DIR)/char-test.c
 CHAR_TEST_ELF := $(BUILD_DIR)/char-test.elf
 CHAR_TEST_BIN := $(BUILD_DIR)/char-test.bin
-MROM_BASE := 0x20000000
+FLASH_BASE := 0x30000000
 
 NPC_VSRC := $(filter-out vsrc/top.v,$(sort $(wildcard vsrc/*.v)))
 YSYXSOC_VSRC := ../ysyxSoC/build/ysyxSoCFull.v $(shell find ../ysyxSoC/perip -type f -name '*.v' | sort)
@@ -28,10 +29,10 @@ VERILATOR_FLAGS := \
 	--autoflush \
 	--timescale 1ns/1ns \
 	--no-timing \
-	-MAKEFLAGS "CXX=$(CXX) LINK=$(CXX) OPT_FAST=-O2 OPT_GLOBAL=-O2 OPT_SLOW=-O2" \
+	-MAKEFLAGS "CXX=$(CXX) LINK=$(CXX) OPT_FAST=$(HOST_OPT) OPT_GLOBAL=$(HOST_OPT) OPT_SLOW=$(HOST_OPT)" \
 	-Mdir $(OBJ_DIR) \
 	-o $(SIM_BIN) \
-	-CFLAGS "-O2 -std=c++17" \
+	-CFLAGS "$(HOST_OPT) -std=c++17" \
 	-LDFLAGS "-ldl"
 
 all: sim
@@ -45,7 +46,7 @@ $(CHAR_TEST_ELF): $(CHAR_TEST_SRC)
 	mkdir -p $(BUILD_DIR)
 	$(RISCV_CC) -O2 -ffreestanding -fno-pic -fno-pie -nostdlib -nostartfiles \
 		-march=rv32i_zicsr -mabi=ilp32 -Wl,--build-id=none -Wl,-e,_start \
-		-Wl,-Ttext=$(MROM_BASE) -o $@ $<
+		-Wl,-Ttext=$(FLASH_BASE) -o $@ $<
 
 $(CHAR_TEST_BIN): $(CHAR_TEST_ELF)
 	$(RISCV_OBJCOPY) -O binary --only-section=.text $< $@
