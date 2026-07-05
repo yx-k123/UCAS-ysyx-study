@@ -28,6 +28,7 @@ static const uint32_t FLASH_BASE = 0x30000000u;
 static const uint32_t UART_ADDR = 0x10000000u;
 static uint8_t pmem[MEM_SIZE];
 static std::vector<uint8_t> g_flash_img;
+static std::vector<uint8_t> g_mrom_img;
 static size_t g_img_size = 0;
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
@@ -270,8 +271,26 @@ extern "C" void flash_read(int32_t addr, int32_t *data) {
 }
 
 extern "C" void mrom_read(int32_t addr, int32_t *data) {
-  (void)addr;
-  *data = 0x00100073;  // ebreak
+  uint32_t value = 0;
+  uint32_t mrom_addr = (uint32_t)addr;
+  if (mrom_addr < MROM_BASE) {
+    *data = 0;
+    return;
+  }
+  uint32_t off = mrom_addr - MROM_BASE;
+  for (int i = 0; i < 4; i++) {
+    uint32_t idx = off + (uint32_t)i;
+    uint8_t byte = (idx < g_mrom_img.size()) ? g_mrom_img[idx] : 0;
+    value |= (uint32_t)byte << (i * 8);
+  }
+  *data = (int32_t)value;
+}
+
+extern "C" void uart_putc(int ch) {
+  char c = (char)(ch & 0xff);
+  putchar(c);
+  fflush(stdout);
+  g_uart_line_open = (c != '\n');
 }
 
 extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
@@ -476,12 +495,15 @@ static bool load_img(const char* img_path) {
 
   memset(pmem, 0, sizeof(pmem));
   g_flash_img.assign((size_t)size, 0);
+  g_mrom_img.assign((size_t)size, 0);
   size_t n = fread(pmem, 1, (size_t)size, fp);
   rewind(fp);
   size_t m = fread(g_flash_img.data(), 1, (size_t)size, fp);
+  rewind(fp);
+  size_t k = fread(g_mrom_img.data(), 1, (size_t)size, fp);
   fclose(fp);
-  if (n != (size_t)size || m != (size_t)size) {
-    printf("failed to read full image, got pmem=%zu flash=%zu bytes\n", n, m);
+  if (n != (size_t)size || m != (size_t)size || k != (size_t)size) {
+    printf("failed to read full image, got pmem=%zu flash=%zu mrom=%zu bytes\n", n, m, k);
     return false;
   }
 
