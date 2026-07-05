@@ -16,9 +16,25 @@ Area heap = RANGE(&_heap_start, &_heap_end);
 static const char mainargs[MAINARGS_MAX_LEN] = TOSTRING(MAINARGS_PLACEHOLDER);
 
 #define UART_ADDR 0x10000000u
+#define UART_REG_THR 0x0u
+#define UART_REG_DLL 0x0u
+#define UART_REG_DLM 0x1u
+#define UART_REG_FCR 0x2u
+#define UART_REG_LCR 0x3u
+#define UART_REG_LSR 0x5u
+
+#define UART_LCR_8N1 0x03u
+#define UART_LCR_DLAB 0x80u
+#define UART_FCR_CLEAR_FIFO 0x06u
+#define UART_LSR_THRE 0x20u
+#define UART_DIVISOR 0x0001u
 
 static inline void mmio_write8(uintptr_t addr, uint8_t data) {
   *(volatile uint8_t *)addr = data;
+}
+
+static inline uint8_t mmio_read8(uintptr_t addr) {
+  return *(volatile uint8_t *)addr;
 }
 
 static void init_ram_sections(void) {
@@ -33,8 +49,18 @@ static void init_ram_sections(void) {
   }
 }
 
+static void uart_init(void) {
+  mmio_write8(UART_ADDR + UART_REG_LCR, UART_LCR_DLAB);
+  mmio_write8(UART_ADDR + UART_REG_DLL, (uint8_t)(UART_DIVISOR & 0xffu));
+  mmio_write8(UART_ADDR + UART_REG_DLM, (uint8_t)(UART_DIVISOR >> 8));
+  mmio_write8(UART_ADDR + UART_REG_LCR, UART_LCR_8N1);
+  mmio_write8(UART_ADDR + UART_REG_FCR, UART_FCR_CLEAR_FIFO);
+}
+
 void putch(char ch) {
-  mmio_write8(UART_ADDR, (uint8_t)ch);
+  while ((mmio_read8(UART_ADDR + UART_REG_LSR) & UART_LSR_THRE) == 0) {
+  }
+  mmio_write8(UART_ADDR + UART_REG_THR, (uint8_t)ch);
 }
 
 __attribute__((noreturn)) void halt(int code) {
@@ -45,6 +71,7 @@ __attribute__((noreturn)) void halt(int code) {
 
 void _trm_init() {
   init_ram_sections();
+  uart_init();
   int ret = main(mainargs);
   halt(ret);
 }
