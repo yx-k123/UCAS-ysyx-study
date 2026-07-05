@@ -25,15 +25,14 @@ static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static const uint32_t MROM_BASE = 0x20000000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
-static const uint32_t UART_ADDR = 0x10000000u;
 static uint8_t pmem[MEM_SIZE];
 static std::vector<uint8_t> g_flash_img;
+static std::vector<uint8_t> g_mrom_img;
 static size_t g_img_size = 0;
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
-static int g_flash_read_log_count = 0;
 
 enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
 
@@ -268,25 +267,29 @@ extern "C" void flash_read(int32_t addr, int32_t *data) {
     value |= (uint32_t)byte << (i * 8);
   }
   *data = (int32_t)value;
-  if (g_flash_read_log_count < 16) {
-    printf("flash_read[%d]: addr=0x%08x data=0x%08x\n",
-           g_flash_read_log_count, off, value);
-    g_flash_read_log_count++;
-  }
 }
 
 extern "C" void mrom_read(int32_t addr, int32_t *data) {
-  switch ((uint32_t)addr & ~0x3u) {
-    case MROM_BASE + 0x0:
-      *data = (int32_t)0x300002b7;  // lui t0, 0x30000
-      break;
-    case MROM_BASE + 0x4:
-      *data = (int32_t)0x00028067;  // jalr x0, t0, 0
-      break;
-    default:
-      *data = 0x00000013;           // nop
-      break;
+  uint32_t value = 0;
+  uint32_t mrom_addr = (uint32_t)addr;
+  if (mrom_addr < MROM_BASE) {
+    *data = 0;
+    return;
   }
+  uint32_t off = mrom_addr - MROM_BASE;
+  for (int i = 0; i < 4; i++) {
+    uint32_t idx = off + (uint32_t)i;
+    uint8_t byte = (idx < g_mrom_img.size()) ? g_mrom_img[idx] : 0;
+    value |= (uint32_t)byte << (i * 8);
+  }
+  *data = (int32_t)value;
+}
+
+extern "C" void uart_putc(int ch) {
+  char c = (char)(ch & 0xff);
+  putchar(c);
+  fflush(stdout);
+  g_uart_line_open = (c != '\n');
 }
 
 extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
@@ -454,19 +457,6 @@ extern "C" void pmem_write(int waddr, int wdata, char wmask) {
   if (g_trace_enabled) {
     printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
   }
-  if (addr == UART_ADDR) {
-    uint8_t mask = (uint8_t)wmask;
-    uint32_t data = (uint32_t)wdata;
-    for (int i = 0; i < 4; i++) {
-      if (mask & (1u << i)) {
-        char ch = (char)((data >> (i * 8)) & 0xff);
-        putchar(ch);
-        g_uart_line_open = (ch != '\n');
-      }
-    }
-    fflush(stdout);
-    return;
-  }
   pmem_write_masked(addr, (uint32_t)wdata, (uint8_t)wmask);
 }
 
@@ -491,12 +481,15 @@ static bool load_img(const char* img_path) {
 
   memset(pmem, 0, sizeof(pmem));
   g_flash_img.assign((size_t)size, 0);
+  g_mrom_img.assign((size_t)size, 0);
   size_t n = fread(pmem, 1, (size_t)size, fp);
   rewind(fp);
   size_t m = fread(g_flash_img.data(), 1, (size_t)size, fp);
+  rewind(fp);
+  size_t k = fread(g_mrom_img.data(), 1, (size_t)size, fp);
   fclose(fp);
-  if (n != (size_t)size || m != (size_t)size) {
-    printf("failed to read full image, got pmem=%zu flash=%zu bytes\n", n, m);
+  if (n != (size_t)size || m != (size_t)size || k != (size_t)size) {
+    printf("failed to read full image, got pmem=%zu flash=%zu mrom=%zu bytes\n", n, m, k);
     return false;
   }
 
@@ -653,9 +646,7 @@ int main(int argc, char** argv) {
   contextp->timeInc(1);
 
   if (diff_so != NULL) {
-    if (!init_difftest(diff_so, diff_port, g_img_size)) {
-      return 1;
-    }
+    printf("difftest: disabled during MROM boot stage, ignoring %s\n", diff_so);
   }
 
   int cycle = 0;
