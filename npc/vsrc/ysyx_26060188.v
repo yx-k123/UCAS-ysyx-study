@@ -1,6 +1,6 @@
 `include "npc_bus.vh"
 
-module ysyx_09922004 (
+module ysyx_26060188 (
   input         clock,
   input         reset,
   input         io_interrupt,

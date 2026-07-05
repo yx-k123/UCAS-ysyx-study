@@ -33,7 +33,6 @@ static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
-static int g_flash_read_log_count = 0;
 
 enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
 
@@ -268,25 +267,11 @@ extern "C" void flash_read(int32_t addr, int32_t *data) {
     value |= (uint32_t)byte << (i * 8);
   }
   *data = (int32_t)value;
-  if (g_flash_read_log_count < 16) {
-    printf("flash_read[%d]: addr=0x%08x data=0x%08x\n",
-           g_flash_read_log_count, off, value);
-    g_flash_read_log_count++;
-  }
 }
 
 extern "C" void mrom_read(int32_t addr, int32_t *data) {
-  switch ((uint32_t)addr & ~0x3u) {
-    case MROM_BASE + 0x0:
-      *data = (int32_t)0x300002b7;  // lui t0, 0x30000
-      break;
-    case MROM_BASE + 0x4:
-      *data = (int32_t)0x00028067;  // jalr x0, t0, 0
-      break;
-    default:
-      *data = 0x00000013;           // nop
-      break;
-  }
+  (void)addr;
+  *data = 0x00100073;  // ebreak
 }
 
 extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
@@ -653,9 +638,7 @@ int main(int argc, char** argv) {
   contextp->timeInc(1);
 
   if (diff_so != NULL) {
-    if (!init_difftest(diff_so, diff_port, g_img_size)) {
-      return 1;
-    }
+    printf("difftest: disabled during MROM boot stage, ignoring %s\n", diff_so);
   }
 
   int cycle = 0;

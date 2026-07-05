@@ -18,7 +18,6 @@ VERILATOR_FLAGS := \
 	--exe \
 	--build \
 	--top-module ysyxSoCFull \
-	-DFAST_FLASH \
 	--timescale 1ns/1ns \
 	--no-timing \
 	-Mdir $(OBJ_DIR) \
