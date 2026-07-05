@@ -28,6 +28,7 @@ static const uint32_t MROM_SIZE = 0x00001000u;
 static const uint32_t SRAM_BASE = 0x0f000000u;
 static const uint32_t SRAM_SIZE = 0x00002000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
+static const int RESET_CYCLES = 16;
 static uint8_t pmem[MEM_SIZE];
 static uint8_t g_sram_init[SRAM_SIZE];
 static std::vector<uint8_t> g_flash_img;
@@ -646,15 +647,17 @@ int main(int argc, char** argv) {
   top->clock = 0;
   top->reset = 1;
 
-  // Reset for one cycle.
-  top->eval();
-  wave_dump(tfp, contextp->time());
-  contextp->timeInc(1);
-  top->clock = 1;
-  top->eval();
-  wave_dump(tfp, contextp->time());
-  contextp->timeInc(1);
-  top->clock = 0;
+  // Hold reset long enough for the ysyxSoC CPU reset chain to settle.
+  for (int i = 0; i < RESET_CYCLES; i++) {
+    top->eval();
+    wave_dump(tfp, contextp->time());
+    contextp->timeInc(1);
+    top->clock = 1;
+    top->eval();
+    wave_dump(tfp, contextp->time());
+    contextp->timeInc(1);
+    top->clock = 0;
+  }
   top->reset = 0;
   top->eval();
   wave_dump(tfp, contextp->time());
