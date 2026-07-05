@@ -2,7 +2,7 @@
 
 static uint64_t boot_mtime = 0;
 
-static const uintptr_t MTIME_ADDR = 0x10000010ul;
+static const uintptr_t MTIME_ADDR = 0x0200bff8ul;
 static const uint64_t NPC_CLINT_FREQ_HZ = 1000000ull;
 
 static inline uint32_t mmio_read32(uintptr_t addr) {

@@ -8,6 +8,10 @@
 #include <time.h>
 #include <vector>
 
+#ifdef USE_NVBOARD
+#include <nvboard.h>
+#endif
+
 #include <svdpi.h>
 #include "VysyxSoCFull.h"
 #include "verilated.h"
@@ -67,6 +71,10 @@ static difftest_raise_intr_t ref_difftest_raise_intr = NULL;
 static difftest_init_t ref_difftest_init = NULL;
 
 VysyxSoCFull* g_top = NULL;
+
+#ifdef USE_NVBOARD
+void nvboard_bind_all_pins(VysyxSoCFull* top);
+#endif
 
 typedef struct {
   char name[128];
@@ -618,6 +626,33 @@ static void sync_host_log_line(void) {
   g_uart_line_open = false;
 }
 
+static void init_external_pins(VysyxSoCFull* top) {
+  top->externalPins_uart_rx = 1;
+  top->externalPins_ps2_clk = 1;
+  top->externalPins_ps2_data = 1;
+}
+
+static void init_nvboard_if_enabled(VysyxSoCFull* top) {
+#ifdef USE_NVBOARD
+  nvboard_bind_all_pins(top);
+  nvboard_init(1);
+#else
+  (void)top;
+#endif
+}
+
+static inline void update_nvboard_if_enabled() {
+#ifdef USE_NVBOARD
+  nvboard_update();
+#endif
+}
+
+static void quit_nvboard_if_enabled() {
+#ifdef USE_NVBOARD
+  nvboard_quit();
+#endif
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) {
     printf("usage: %s <image.bin> [halt_addr]\n", argv[0]);
@@ -701,6 +736,8 @@ int main(int argc, char** argv) {
   contextp->commandArgs(argc, argv);
   VysyxSoCFull* top = new VysyxSoCFull{contextp};
   g_top = top;
+  init_external_pins(top);
+  init_nvboard_if_enabled(top);
 
   #if VM_TRACE
   VerilatedVcdC* tfp = NULL;
@@ -756,6 +793,7 @@ int main(int argc, char** argv) {
   uint64_t committed = 0;
   int exit_code = 1;
   while (!contextp->gotFinish() && !g_ebreak_hit) {
+    update_nvboard_if_enabled();
     top->eval();
     wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
@@ -849,6 +887,7 @@ difftest_done:
   }
 
   wave_close(tfp);
+  quit_nvboard_if_enabled();
   delete top;
   delete contextp;
   return exit_code;

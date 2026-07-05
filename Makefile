@@ -1,4 +1,4 @@
-STUID = 2023K8009922004
+STUID = 26060188
 STUNAME = kouyixin
 
 # DO NOT modify the following code!!!

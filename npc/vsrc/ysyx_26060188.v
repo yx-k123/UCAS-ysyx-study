@@ -312,8 +312,8 @@ module ysyx_26060188_axi4lite_clint (
   localparam [1:0] ST_RD_RESP = 2'd1;
   localparam [1:0] ST_WR_RESP = 2'd2;
 
-  localparam [31:0] MTIME_LO_ADDR = 32'h1000_0010;
-  localparam [31:0] MTIME_HI_ADDR = 32'h1000_0014;
+  localparam [31:0] MTIME_LO_ADDR = 32'h0200_bff8;
+  localparam [31:0] MTIME_HI_ADDR = 32'h0200_bffc;
 
   localparam [1:0] AXI_RESP_OKAY   = 2'b00;
   localparam [1:0] AXI_RESP_SLVERR = 2'b10;
@@ -522,8 +522,8 @@ module ysyx_26060188_axi4lite_clint_xbar (
   function is_clint_addr;
     input [31:0] addr;
     begin
-      is_clint_addr = ((addr & 32'hffff_fffc) == 32'h1000_0010) ||
-                      ((addr & 32'hffff_fffc) == 32'h1000_0014);
+      is_clint_addr = ((addr & 32'hffff_fffc) == 32'h0200_bff8) ||
+                      ((addr & 32'hffff_fffc) == 32'h0200_bffc);
     end
   endfunction
 
