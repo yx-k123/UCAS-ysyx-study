@@ -29,6 +29,7 @@ static const uint32_t SRAM_BASE = 0x0f000000u;
 static const uint32_t SRAM_SIZE = 0x00002000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
 static const uint32_t FLASH_STORAGE_SIZE = 0x01000000u;  // 16 MiB
+static const uint32_t FLASH_CHAR_TEST_OFFSET = 0x00000100u;
 static const int RESET_CYCLES = 16;
 static uint8_t pmem[MEM_SIZE];
 static uint8_t g_sram_init[SRAM_SIZE];
@@ -90,6 +91,12 @@ static void init_flash_contents() {
   static const uint8_t kFlashBytes[] = {
     0x11u, 0x22u, 0x33u, 0x44u, 0xaau, 0x55u, 0xccu, 0x33u,
   };
+  static const uint8_t kCharTestImage[] = {
+    0xb7u, 0x07u, 0x00u, 0x10u,
+    0x13u, 0x07u, 0x10u, 0x04u,
+    0x23u, 0x80u, 0xe7u, 0x00u,
+    0x6fu, 0x00u, 0x00u, 0x00u,
+  };
 
   g_flash_img.assign(FLASH_STORAGE_SIZE, 0);
   for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashWords) / sizeof(kFlashWords[0])); i++) {
@@ -97,6 +104,9 @@ static void init_flash_contents() {
   }
   for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashBytes) / sizeof(kFlashBytes[0])); i++) {
     g_flash_img[0x10u + i] = kFlashBytes[i];
+  }
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kCharTestImage) / sizeof(kCharTestImage[0])); i++) {
+    g_flash_img[FLASH_CHAR_TEST_OFFSET + i] = kCharTestImage[i];
   }
 }
 
