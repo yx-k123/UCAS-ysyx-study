@@ -28,6 +28,7 @@ static const uint32_t MROM_SIZE = 0x00001000u;
 static const uint32_t SRAM_BASE = 0x0f000000u;
 static const uint32_t SRAM_SIZE = 0x00002000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
+static const uint32_t FLASH_STORAGE_SIZE = 0x01000000u;  // 16 MiB
 static const int RESET_CYCLES = 16;
 static uint8_t pmem[MEM_SIZE];
 static uint8_t g_sram_init[SRAM_SIZE];
@@ -71,6 +72,33 @@ typedef struct {
 
 static SymbolEntry syms[1024];
 static int sym_cnt = 0;
+
+static void flash_store32(uint32_t off, uint32_t value) {
+  assert(off + 4 <= FLASH_STORAGE_SIZE);
+  for (int i = 0; i < 4; i++) {
+    g_flash_img[off + (uint32_t)i] = (uint8_t)((value >> (i * 8)) & 0xffu);
+  }
+}
+
+static void init_flash_contents() {
+  static const uint32_t kFlashWords[] = {
+    0x12345678u,
+    0xdeadbeefu,
+    0x0badc0deu,
+    0x5a5aa5a5u,
+  };
+  static const uint8_t kFlashBytes[] = {
+    0x11u, 0x22u, 0x33u, 0x44u, 0xaau, 0x55u, 0xccu, 0x33u,
+  };
+
+  g_flash_img.assign(FLASH_STORAGE_SIZE, 0);
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashWords) / sizeof(kFlashWords[0])); i++) {
+    flash_store32(i * 4, kFlashWords[i]);
+  }
+  for (uint32_t i = 0; i < (uint32_t)(sizeof(kFlashBytes) / sizeof(kFlashBytes[0])); i++) {
+    g_flash_img[0x10u + i] = kFlashBytes[i];
+  }
+}
 
 static void init_ftrace(const char *elf_file) {
   if (!g_trace_enabled) {
@@ -496,18 +524,15 @@ static bool load_img(const char* img_path) {
 
   memset(pmem, 0, sizeof(pmem));
   memset(g_sram_init, 0, sizeof(g_sram_init));
-  g_flash_img.assign((size_t)size, 0);
   g_mrom_img.assign((size_t)size, 0);
   size_t n = fread(pmem, 1, (size_t)size, fp);
-  rewind(fp);
-  size_t m = fread(g_flash_img.data(), 1, (size_t)size, fp);
-  rewind(fp);
-  size_t k = fread(g_mrom_img.data(), 1, (size_t)size, fp);
   fclose(fp);
-  if (n != (size_t)size || m != (size_t)size || k != (size_t)size) {
-    printf("failed to read full image, got pmem=%zu flash=%zu mrom=%zu bytes\n", n, m, k);
+  if (n != (size_t)size) {
+    printf("failed to read full image, got pmem=%zu bytes\n", n);
     return false;
   }
+  memcpy(g_mrom_img.data(), pmem, (size_t)size);
+  init_flash_contents();
 
   printf("loaded image %s (%ld bytes)\n", img_path, size);
   g_img_size = (size_t)size;
