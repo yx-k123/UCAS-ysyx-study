@@ -105,6 +105,7 @@ module ysyx_26060188 (
 
   wire if_valid;
   wire if_ready;
+  wire if_ready_raw;
   wire id_valid;
   wire id_ready;
   wire ex_valid;
@@ -136,6 +137,9 @@ module ysyx_26060188 (
   wire rf_we;
   wire [4:0] rf_waddr;
   wire [31:0] rf_wdata;
+
+  reg        last_wb_valid_r;
+  reg [4:0]  last_wb_rd_r;
 
   wire [31:0] ifu_axi_araddr;
   wire        ifu_axi_arvalid;
@@ -201,6 +205,25 @@ module ysyx_26060188 (
 
   reg         debug_commit_r;
 
+  wire [6:0] hazard_opcode = inst[6:0];
+  wire [2:0] hazard_funct3 = inst[14:12];
+  wire [4:0] hazard_rs1_idx = inst[19:15];
+  wire [4:0] hazard_rs2_idx = inst[24:20];
+  wire       hazard_use_rs1 = (hazard_opcode == 7'b0110011) ||
+                              (hazard_opcode == 7'b0010011) ||
+                              (hazard_opcode == 7'b0000011) ||
+                              (hazard_opcode == 7'b0100011) ||
+                              (hazard_opcode == 7'b1100011) ||
+                              (hazard_opcode == 7'b1100111) ||
+                              ((hazard_opcode == 7'b1110011) &&
+                               ((hazard_funct3 == 3'b001) || (hazard_funct3 == 3'b010)));
+  wire       hazard_use_rs2 = (hazard_opcode == 7'b0110011) ||
+                              (hazard_opcode == 7'b0100011) ||
+                              (hazard_opcode == 7'b1100011);
+  wire       data_hazard = if_valid && last_wb_valid_r &&
+                           ((hazard_use_rs1 && (hazard_rs1_idx != 5'd0) && (hazard_rs1_idx == last_wb_rd_r)) ||
+                            (hazard_use_rs2 && (hazard_rs2_idx != 5'd0) && (hazard_rs2_idx == last_wb_rd_r)));
+
   assign pc_valid = ~reset;
   assign wb_fire = mem_valid && mem_ready;
   assign inst = ifu_idu_bus[`IFU_IDU_INST];
@@ -231,12 +254,14 @@ module ysyx_26060188 (
 
   idu u_idu (
     .if_bus_i(ifu_idu_bus),
-    .if_valid_i(if_valid),
-    .if_ready_o(if_ready),
+    .if_valid_i(if_valid && !data_hazard),
+    .if_ready_o(if_ready_raw),
     .id_bus_o(idu_exu_bus),
     .id_valid_o(id_valid),
     .id_ready_i(id_ready)
   );
+
+  assign if_ready = if_ready_raw && !data_hazard;
 
   regfile u_regfile (
     .clk(clock),
@@ -455,8 +480,14 @@ module ysyx_26060188 (
   always @(posedge clock) begin
     if (reset) begin
       pc_r <= 32'h2000_0000;
+      last_wb_valid_r <= 1'b0;
+      last_wb_rd_r <= 5'd0;
       debug_commit_r <= 1'b0;
     end else begin
+      last_wb_valid_r <= wb_fire && rf_we && (rf_waddr != 5'd0);
+      if (wb_fire && rf_we && (rf_waddr != 5'd0)) begin
+        last_wb_rd_r <= rf_waddr;
+      end
       debug_commit_r <= wb_fire;
       if (wb_fire) begin
         trace_inst(pc_r, inst);

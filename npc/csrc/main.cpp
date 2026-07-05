@@ -25,7 +25,6 @@ static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static const uint32_t MROM_BASE = 0x20000000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
-static const uint32_t UART_ADDR = 0x10000000u;
 static uint8_t pmem[MEM_SIZE];
 static std::vector<uint8_t> g_flash_img;
 static std::vector<uint8_t> g_mrom_img;
@@ -457,19 +456,6 @@ extern "C" void pmem_write(int waddr, int wdata, char wmask) {
   uint32_t addr = ((uint32_t)waddr) & ~0x3u;
   if (g_trace_enabled) {
     printf("mtrace: [WRITE] addr=0x%08x data=0x%08x wmask=0x%02x\n", addr, (uint32_t)wdata, (uint8_t)wmask);
-  }
-  if (addr == UART_ADDR) {
-    uint8_t mask = (uint8_t)wmask;
-    uint32_t data = (uint32_t)wdata;
-    for (int i = 0; i < 4; i++) {
-      if (mask & (1u << i)) {
-        char ch = (char)((data >> (i * 8)) & 0xff);
-        putchar(ch);
-        g_uart_line_open = (ch != '\n');
-      }
-    }
-    fflush(stdout);
-    return;
   }
   pmem_write_masked(addr, (uint32_t)wdata, (uint8_t)wmask);
 }

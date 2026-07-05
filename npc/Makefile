@@ -27,9 +27,10 @@ VERILATOR_FLAGS := \
 	--top-module ysyxSoCFull \
 	--timescale 1ns/1ns \
 	--no-timing \
+	-MAKEFLAGS "CXX=$(CXX) LINK=$(CXX) OPT_FAST=-O0 OPT_GLOBAL=-O0 OPT_SLOW=-O0" \
 	-Mdir $(OBJ_DIR) \
 	-o $(SIM_BIN) \
-	-CFLAGS "-O2 -std=c++17" \
+	-CFLAGS "-O0 -std=c++17" \
 	-LDFLAGS "-ldl"
 
 all: sim
