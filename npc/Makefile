@@ -1,4 +1,6 @@
 VERILATOR ?= verilator
+IVERILOG ?= iverilog
+VVP ?= vvp
 CXX ?= g++-12
 RISCV_CC ?= riscv64-linux-gnu-gcc
 RISCV_OBJCOPY ?= riscv64-linux-gnu-objcopy
@@ -12,14 +14,31 @@ CHAR_TEST_ELF := $(BUILD_DIR)/char-test.elf
 CHAR_TEST_BIN := $(BUILD_DIR)/char-test.bin
 FLASH_BASE := 0x30000000
 
-NPC_VSRC := $(filter-out vsrc/top.v,$(sort $(wildcard vsrc/*.v)))
+NPC_VSRC := vsrc/ysyx_26060188.v
+NPC_IVERILOG_VSRC := $(NPC_VSRC) vsrc/ysyx_26060188_icarus_mem.v vsrc/ysyx_26060188_icarus_tb.v
 YSYXSOC_VSRC := ../ysyxSoC/build/ysyxSoCFull.v $(shell find ../ysyxSoC/perip -type f -name '*.v' | sort)
 CSRCS := csrc/main.cpp
+IVERILOG_BUILD_DIR := $(BUILD_DIR)/iverilog
+IVERILOG_SIM := $(IVERILOG_BUILD_DIR)/npc-icarus.vvp
+IMG ?=
+MAX_CYCLES ?= 5000000
+TIMEOUT_OK ?= 0
 
 VERILATOR_INCLUDES := \
 	-Ivsrc \
 	-I../ysyxSoC/perip/uart16550/rtl \
 	-I../ysyxSoC/perip/spi/rtl
+
+LINT_TOP := ysyx_26060188
+LINT_FLAGS := \
+	--lint-only \
+	-Wall \
+	-Wno-DECLFILENAME \
+	--top-module $(LINT_TOP)
+
+IVERILOG_FLAGS := \
+	-g2012 \
+	-s ysyx_26060188_icarus_tb
 
 VERILATOR_FLAGS := \
 	--cc \
@@ -36,6 +55,17 @@ VERILATOR_FLAGS := \
 	-LDFLAGS "-ldl"
 
 all: sim
+
+lint:
+	$(VERILATOR) $(LINT_FLAGS) $(NPC_VSRC)
+
+iverilog:
+	mkdir -p $(IVERILOG_BUILD_DIR)
+	$(IVERILOG) $(IVERILOG_FLAGS) -o $(IVERILOG_SIM) $(NPC_IVERILOG_VSRC)
+
+iverilog-run: iverilog
+	@if [ -z "$(IMG)" ]; then echo "IMG is required, e.g. make -C npc iverilog-run IMG=/abs/path/to/image.hex"; exit 1; fi
+	$(VVP) $(IVERILOG_SIM) +image=$(abspath $(IMG)) +max-cycles=$(MAX_CYCLES) +timeout-ok=$(TIMEOUT_OK) +wave=$(WAVE)
 
 sim:
 	$(call git_commit, "sim RTL") # DO NOT REMOVE THIS LINE!!!
