@@ -25,6 +25,7 @@ VERILATOR_FLAGS := \
 	--exe \
 	--build \
 	--top-module ysyxSoCFull \
+	--autoflush \
 	--timescale 1ns/1ns \
 	--no-timing \
 	-MAKEFLAGS "CXX=$(CXX) LINK=$(CXX) OPT_FAST=-O2 OPT_GLOBAL=-O2 OPT_SLOW=-O2" \
