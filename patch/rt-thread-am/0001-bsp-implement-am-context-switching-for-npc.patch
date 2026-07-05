@@ -1,0 +1,115 @@
+From 3578b7b69868a6d08f699abc550b889226b71ac4 Mon Sep 17 00:00:00 2001
+From: "kouyixin ubuntu22.04" <1713284633@qq.com>
+Date: Sun, 5 Jul 2026 23:22:13 +0800
+Subject: [PATCH] bsp: implement am context switching for npc
+
+---
+ bsp/abstract-machine/src/context.c | 75 ++++++++++++++++++++++++++++--
+ 1 file changed, 71 insertions(+), 4 deletions(-)
+
+diff --git a/bsp/abstract-machine/src/context.c b/bsp/abstract-machine/src/context.c
+index ee38829ae..55c9aafcd 100644
+--- a/bsp/abstract-machine/src/context.c
++++ b/bsp/abstract-machine/src/context.c
+@@ -2,8 +2,51 @@
+ #include <klib.h>
+ #include <rtthread.h>
+ 
++struct rt_hw_switch_args
++{
++  Context **from;
++  Context **to;
++};
++
++struct rt_hw_stack_bootstrap
++{
++  void (*tentry)(void *parameter);
++  void *parameter;
++  void (*texit)(void);
++};
++
++static volatile struct rt_hw_switch_args pending_switch = {0};
++
++static void rt_hw_stack_entry(void *parameter)
++{
++  struct rt_hw_stack_bootstrap *bootstrap = parameter;
++
++  bootstrap->tentry(bootstrap->parameter);
++  bootstrap->texit();
++
++  __builtin_unreachable();
++}
++
+ static Context* ev_handler(Event e, Context *c) {
+   switch (e.event) {
++    case EVENT_YIELD: {
++      Context **from = pending_switch.from;
++      Context **to = pending_switch.to;
++
++      if (from != NULL) {
++        *from = c;
++      }
++      if (to != NULL) {
++        Context *next = *to;
++
++        pending_switch.from = NULL;
++        pending_switch.to = NULL;
++        return next;
++      }
++      break;
++    }
++    case EVENT_IRQ_TIMER:
++      break;
+     default: printf("Unhandled event ID = %d\n", e.event); assert(0);
+   }
+   return c;
+@@ -14,18 +57,42 @@ void __am_cte_init() {
+ }
+ 
+ void rt_hw_context_switch_to(rt_ubase_t to) {
+-  assert(0);
++  pending_switch.from = NULL;
++  pending_switch.to = (Context **)to;
++  yield();
+ }
+ 
+ void rt_hw_context_switch(rt_ubase_t from, rt_ubase_t to) {
+-  assert(0);
++  pending_switch.from = (Context **)from;
++  pending_switch.to = (Context **)to;
++  yield();
+ }
+ 
+ void rt_hw_context_switch_interrupt(void *context, rt_ubase_t from, rt_ubase_t to, struct rt_thread *to_thread) {
++  (void)context;
++  (void)from;
++  (void)to;
++  (void)to_thread;
+   assert(0);
+ }
+ 
+ rt_uint8_t *rt_hw_stack_init(void *tentry, void *parameter, rt_uint8_t *stack_addr, void *texit) {
+-  assert(0);
+-  return NULL;
++  rt_ubase_t stack_top = RT_ALIGN_DOWN((rt_ubase_t)stack_addr + sizeof(uintptr_t), sizeof(uintptr_t));
++  struct rt_hw_stack_bootstrap *bootstrap;
++  Context *context;
++
++  stack_top -= sizeof(*bootstrap);
++  stack_top = RT_ALIGN_DOWN(stack_top, sizeof(uintptr_t));
++
++  bootstrap = (struct rt_hw_stack_bootstrap *)stack_top;
++  bootstrap->tentry = (void (*)(void *))tentry;
++  bootstrap->parameter = parameter;
++  bootstrap->texit = (void (*)(void))texit;
++
++  context = kcontext((Area) {
++    .start = NULL,
++    .end = (void *)stack_top,
++  }, rt_hw_stack_entry, bootstrap);
++
++  return (rt_uint8_t *)context;
+ }
+-- 
+2.34.1
+

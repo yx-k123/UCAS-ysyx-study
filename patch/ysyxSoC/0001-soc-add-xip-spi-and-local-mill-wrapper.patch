@@ -1,0 +1,587 @@
+From 18c735d498e2f64746ee5a12b47d44d891c50437 Mon Sep 17 00:00:00 2001
+From: "kouyixin ubuntu22.04" <1713284633@qq.com>
+Date: Sun, 5 Jul 2026 23:20:25 +0800
+Subject: [PATCH] soc: add xip spi and local mill wrapper
+
+---
+ .gitignore                         |   2 +
+ Makefile                           |   2 +-
+ mill                               | 211 +++++++++++++++++++++++++++
+ perip/bitrev/bitrev.v              |  52 ++++++-
+ perip/spi/rtl/spi_top_apb.v        | 223 ++++++++++++++++++++++++-----
+ perip/uart16550/rtl/uart_top_apb.v |   8 +-
+ 6 files changed, 462 insertions(+), 36 deletions(-)
+ create mode 100755 mill
+
+diff --git a/.gitignore b/.gitignore
+index 3c0160d0..76bd6ecc 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,4 @@
+ build/
+ out/
++.jdk/
++.mill-download/
+diff --git a/Makefile b/Makefile
+index c30262ea..38f299a9 100644
+--- a/Makefile
++++ b/Makefile
+@@ -11,7 +11,7 @@ $(V_FILE_FINAL): $(SCALA_FILES)
+ # TODO: This can be removed after chisel publishes a new version
+ 	@./patch/update-firtool.sh $(FIRTOOL_VERSION) $(FIRTOOL_PATCH_DIR)
+ 	CHISEL_FIRTOOL_PATH=$(FIRTOOL_PATCH_DIR)/firtool-$(FIRTOOL_VERSION)/bin \
+-	mill -i ysyxsoc.runMain ysyx.Elaborate --target-dir $(@D)
++	./mill -i ysyxsoc.runMain ysyx.Elaborate --target-dir $(@D)
+ 	mv $(V_FILE_GEN) $@
+ 	sed -i -e 's/_\(aw\|ar\|w\|r\|b\)_\(\|bits_\)/_\1/g' $@
+ 	sed -i '/firrtl_black_box_resource_files.f/, $$d' $@
+diff --git a/mill b/mill
+new file mode 100755
+index 00000000..094eb52b
+--- /dev/null
++++ b/mill
+@@ -0,0 +1,211 @@
++#!/usr/bin/env sh
++
++set -e
++
++MILL_SCRIPT_DIR="$(CDPATH= cd -- "$(dirname "$0")" && pwd)"
++
++if [ -z "$JAVA_HOME" ] && [ -x "${MILL_SCRIPT_DIR}/.jdk/current/bin/java" ] ; then
++  JAVA_HOME="${MILL_SCRIPT_DIR}/.jdk/current"
++  export JAVA_HOME
++fi
++
++if [ -z "${MILL_FINAL_DOWNLOAD_FOLDER}" ] ; then
++  MILL_FINAL_DOWNLOAD_FOLDER="${MILL_SCRIPT_DIR}/.mill-download"
++  export MILL_FINAL_DOWNLOAD_FOLDER
++fi
++
++if [ -z "${DEFAULT_MILL_VERSION}" ] ; then DEFAULT_MILL_VERSION="1.1.7"; fi
++
++if [ -z "${GITHUB_RELEASE_CDN}" ] ; then GITHUB_RELEASE_CDN=""; fi
++
++if [ -z "$MILL_MAIN_CLI" ] ; then MILL_MAIN_CLI="${0}"; fi
++
++MILL_REPO_URL="https://github.com/com-lihaoyi/mill"
++
++MILL_BUILD_SCRIPT=""
++
++if [ -f "build.mill" ] ; then
++  MILL_BUILD_SCRIPT="build.mill"
++elif [ -f "build.mill.scala" ] ; then
++  MILL_BUILD_SCRIPT="build.mill.scala"
++elif [ -f "build.sc" ] ; then
++  MILL_BUILD_SCRIPT="build.sc"
++fi
++
++# `s/.*://`:
++#   This is a greedy match that removes everything from the beginning of the line up to (and including) the last
++#   colon (:). This effectively isolates the value part of the declaration.
++#
++#  `s/#.*//`:
++#    This removes any comments at the end of the line.
++#
++#  `s/['\"]//g`:
++#    This removes all single and double quotes from the string, wherever they appear (g is for "global").
++#
++#  `s/^[[:space:]]*//; s/[[:space:]]*$//`:
++#    These two expressions trim any leading or trailing whitespace ([[:space:]] matches spaces and tabs).
++TRIM_VALUE_SED="s/.*://; s/#.*//; s/['\"]//g; s/^[[:space:]]*//; s/[[:space:]]*$//"
++
++if [ -z "${MILL_VERSION}" ] ; then
++  if [ -f ".mill-version" ] ; then
++    MILL_VERSION="$(tr '\r' '\n' < .mill-version | head -n 1 2> /dev/null)"
++  elif [ -f ".config/mill-version" ] ; then
++    MILL_VERSION="$(tr '\r' '\n' < .config/mill-version | head -n 1 2> /dev/null)"
++  elif [ -f "build.mill.yaml" ] ; then
++    MILL_VERSION="$(grep -E "mill-version:" "build.mill.yaml" | sed -E "$TRIM_VALUE_SED")"
++  elif [ -n "${MILL_BUILD_SCRIPT}" ] ; then
++    MILL_VERSION="$(grep -E "//\|.*mill-version" "${MILL_BUILD_SCRIPT}" | sed -E "$TRIM_VALUE_SED")"
++  fi
++fi
++
++if [ -z "${MILL_VERSION}" ] ; then MILL_VERSION="${DEFAULT_MILL_VERSION}"; fi
++
++MILL_USER_CACHE_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/mill"
++
++if [ -z "${MILL_FINAL_DOWNLOAD_FOLDER}" ] ; then MILL_FINAL_DOWNLOAD_FOLDER="${MILL_USER_CACHE_DIR}/download"; fi
++
++MILL_NATIVE_SUFFIX="-native"
++MILL_JVM_SUFFIX="-jvm"
++ARTIFACT_SUFFIX=""
++
++# Check if GLIBC version is at least the required version
++# Returns 0 (true) if GLIBC >= required version, 1 (false) otherwise
++check_glibc_version() {
++  required_version="2.39"
++  required_major=$(echo "$required_version" | cut -d. -f1)
++  required_minor=$(echo "$required_version" | cut -d. -f2)
++  # Get GLIBC version from ldd --version (first line contains version like "ldd (GNU libc) 2.31")
++  glibc_version=$(ldd --version 2>/dev/null | head -n 1 | grep -oE '[0-9]+\.[0-9]+$' || echo "")
++  if [ -z "$glibc_version" ]; then
++    # If we can't determine GLIBC version, assume it's too old
++    return 1
++  fi
++  glibc_major=$(echo "$glibc_version" | cut -d. -f1)
++  glibc_minor=$(echo "$glibc_version" | cut -d. -f2)
++  if [ "$glibc_major" -gt "$required_major" ]; then
++    return 0
++  elif [ "$glibc_major" -eq "$required_major" ] && [ "$glibc_minor" -ge "$required_minor" ]; then
++    return 0
++  else
++    return 1
++  fi
++}
++
++set_artifact_suffix() {
++  if [ "$(uname -s 2>/dev/null | cut -c 1-5)" = "Linux" ]; then
++    # Native binaries require new enough GLIBC; fall back to JVM launcher if older
++    if ! check_glibc_version; then
++      return
++    fi
++    if [ "$(uname -m)" = "aarch64" ]; then ARTIFACT_SUFFIX="-native-linux-aarch64"
++    else ARTIFACT_SUFFIX="-native-linux-amd64"; fi
++  elif [ "$(uname)" = "Darwin" ]; then
++    if [ "$(uname -m)" = "arm64" ]; then ARTIFACT_SUFFIX="-native-mac-aarch64"
++    else ARTIFACT_SUFFIX="-native-mac-amd64"; fi
++  else
++    echo "This native mill launcher supports only Linux and macOS." 1>&2
++    exit 1
++  fi
++}
++
++case "$MILL_VERSION" in
++  *"$MILL_NATIVE_SUFFIX")
++    MILL_VERSION=${MILL_VERSION%"$MILL_NATIVE_SUFFIX"}
++    set_artifact_suffix
++    ;;
++
++  *"$MILL_JVM_SUFFIX")
++    MILL_VERSION=${MILL_VERSION%"$MILL_JVM_SUFFIX"}
++    ;;
++
++  *)
++    case "$MILL_VERSION" in
++      0.1.* | 0.2.* | 0.3.* | 0.4.* | 0.5.* | 0.6.* | 0.7.* | 0.8.* | 0.9.* | 0.10.* | 0.11.* | 0.12.*)
++        ;;
++      *)
++        set_artifact_suffix
++        ;;
++    esac
++    ;;
++esac
++
++MILL="${MILL_FINAL_DOWNLOAD_FOLDER}/$MILL_VERSION$ARTIFACT_SUFFIX"
++
++# If not already downloaded, download it
++if [ ! -s "${MILL}" ] || [ "$MILL_TEST_DRY_RUN_LAUNCHER_SCRIPT" = "1" ] ; then
++  case $MILL_VERSION in
++    0.0.* | 0.1.* | 0.2.* | 0.3.* | 0.4.*)
++      MILL_DOWNLOAD_SUFFIX=""
++      MILL_DOWNLOAD_FROM_MAVEN=0
++      ;;
++    0.5.* | 0.6.* | 0.7.* | 0.8.* | 0.9.* | 0.10.* | 0.11.0-M*)
++      MILL_DOWNLOAD_SUFFIX="-assembly"
++      MILL_DOWNLOAD_FROM_MAVEN=0
++      ;;
++    *)
++      MILL_DOWNLOAD_SUFFIX="-assembly"
++      MILL_DOWNLOAD_FROM_MAVEN=1
++      ;;
++  esac
++  case $MILL_VERSION in
++    0.12.0 | 0.12.1 | 0.12.2 | 0.12.3 | 0.12.4 | 0.12.5 | 0.12.6 | 0.12.7 | 0.12.8 | 0.12.9 | 0.12.10 | 0.12.11)
++      MILL_DOWNLOAD_EXT="jar"
++      ;;
++    0.12.*)
++      MILL_DOWNLOAD_EXT="exe"
++      ;;
++    0.*)
++      MILL_DOWNLOAD_EXT="jar"
++      ;;
++    *)
++      MILL_DOWNLOAD_EXT="exe"
++      ;;
++  esac
++
++  MILL_TEMP_DOWNLOAD_FILE="${MILL_OUTPUT_DIR:-out}/mill-temp-download"
++  mkdir -p "$(dirname "${MILL_TEMP_DOWNLOAD_FILE}")"
++
++  if [ "$MILL_DOWNLOAD_FROM_MAVEN" = "1" ] ; then
++    MILL_DOWNLOAD_URL="https://repo1.maven.org/maven2/com/lihaoyi/mill-dist${ARTIFACT_SUFFIX}/${MILL_VERSION}/mill-dist${ARTIFACT_SUFFIX}-${MILL_VERSION}.${MILL_DOWNLOAD_EXT}"
++  else
++    MILL_VERSION_TAG=$(echo "$MILL_VERSION" | sed -E 's/([^-]+)(-M[0-9]+)?(-.*)?/\1\2/')
++    MILL_DOWNLOAD_URL="${GITHUB_RELEASE_CDN}${MILL_REPO_URL}/releases/download/${MILL_VERSION_TAG}/${MILL_VERSION}${MILL_DOWNLOAD_SUFFIX}"
++    unset MILL_VERSION_TAG
++  fi
++
++
++  if [ "$MILL_TEST_DRY_RUN_LAUNCHER_SCRIPT" = "1" ] ; then
++    echo "$MILL_DOWNLOAD_URL"
++    echo "$MILL"
++    exit 0
++  fi
++
++  echo "Downloading mill ${MILL_VERSION} from ${MILL_DOWNLOAD_URL} ..." 1>&2
++  curl -f -L -o "${MILL_TEMP_DOWNLOAD_FILE}" "${MILL_DOWNLOAD_URL}"
++
++  chmod +x "${MILL_TEMP_DOWNLOAD_FILE}"
++
++  mkdir -p "${MILL_FINAL_DOWNLOAD_FOLDER}"
++  mv "${MILL_TEMP_DOWNLOAD_FILE}" "${MILL}"
++
++  unset MILL_TEMP_DOWNLOAD_FILE
++  unset MILL_DOWNLOAD_SUFFIX
++fi
++
++MILL_FIRST_ARG=""
++if [ "$1" = "--bsp" ] || [ "${1#"-i"}" != "$1" ] || [ "$1" = "--interactive" ] || [ "$1" = "--no-server" ] || [ "$1" = "--no-daemon" ] || [ "$1" = "--help" ] ; then
++  # Need to preserve the first position of those listed options
++  MILL_FIRST_ARG=$1
++  shift
++fi
++
++unset MILL_FINAL_DOWNLOAD_FOLDER
++unset MILL_OLD_DOWNLOAD_PATH
++unset OLD_MILL
++unset MILL_VERSION
++unset MILL_REPO_URL
++
++# -D mill.main.cli is for compatibility with Mill 0.10.9 - 0.13.0-M2
++# We don't quote MILL_FIRST_ARG on purpose, so we can expand the empty value without quotes
++# shellcheck disable=SC2086
++exec "${MILL}" $MILL_FIRST_ARG -D "mill.main.cli=${MILL_MAIN_CLI}" "$@"
+diff --git a/perip/bitrev/bitrev.v b/perip/bitrev/bitrev.v
+index f1c3b363..b5417a33 100644
+--- a/perip/bitrev/bitrev.v
++++ b/perip/bitrev/bitrev.v
+@@ -4,5 +4,55 @@ module bitrev (
+   input  mosi,
+   output miso
+ );
+-  assign miso = 1'b1;
++  reg [7:0] rx_shift;
++  reg [7:0] resp_byte;
++  reg [7:0] tx_shift;
++  reg [4:0] bit_count;
++  reg miso_r;
++
++  function [7:0] reverse8;
++    input [7:0] data;
++    integer i;
++    begin
++      for (i = 0; i < 8; i = i + 1) begin
++        reverse8[i] = data[7 - i];
++      end
++    end
++  endfunction
++
++  always @(posedge sck or posedge ss) begin
++    if (ss) begin
++      rx_shift <= 8'b0;
++      resp_byte <= 8'b0;
++      bit_count <= 5'b0;
++    end else begin
++      if (bit_count < 5'd8) begin
++        rx_shift <= {rx_shift[6:0], mosi};
++        if (bit_count == 5'd7) begin
++          resp_byte <= reverse8({rx_shift[6:0], mosi});
++        end
++      end
++
++      if (bit_count < 5'd16) begin
++        bit_count <= bit_count + 5'd1;
++      end
++    end
++  end
++
++  always @(negedge sck or posedge ss) begin
++    if (ss) begin
++      tx_shift <= 8'b0;
++      miso_r <= 1'b1;
++    end else if (bit_count == 5'd8) begin
++      miso_r <= resp_byte[7];
++      tx_shift <= {resp_byte[6:0], 1'b1};
++    end else if (bit_count >= 5'd8 && bit_count < 5'd16) begin
++      miso_r <= tx_shift[7];
++      tx_shift <= {tx_shift[6:0], 1'b1};
++    end else begin
++      miso_r <= 1'b1;
++    end
++  end
++
++  assign miso = miso_r;
+ endmodule
+diff --git a/perip/spi/rtl/spi_top_apb.v b/perip/spi/rtl/spi_top_apb.v
+index 92d37516..e6533401 100644
+--- a/perip/spi/rtl/spi_top_apb.v
++++ b/perip/spi/rtl/spi_top_apb.v
+@@ -1,7 +1,3 @@
+-// define this macro to enable fast behavior simulation
+-// for flash by skipping SPI transfers
+-//`define FAST_FLASH
+-
+ module spi_top_apb #(
+   parameter flash_addr_start = 32'h30000000,
+   parameter flash_addr_end   = 32'h3fffffff,
+@@ -27,39 +23,200 @@ module spi_top_apb #(
+   output                  spi_irq_out
+ );
+ 
+-`ifdef FAST_FLASH
++localparam [4:0] SPI_REG_TX0     = 5'h00;
++localparam [4:0] SPI_REG_TX1     = 5'h04;
++localparam [4:0] SPI_REG_CTRL    = 5'h10;
++localparam [4:0] SPI_REG_DIVIDER = 5'h14;
++localparam [4:0] SPI_REG_SS      = 5'h18;
+ 
+-wire [31:0] data;
+-parameter invalid_cmd = 8'h0;
+-flash_cmd flash_cmd_i(
+-  .clock(clock),
+-  .valid(in_psel && !in_penable),
+-  .cmd(in_pwrite ? invalid_cmd : 8'h03),
+-  .addr({8'b0, in_paddr[23:2], 2'b0}),
+-  .data(data)
+-);
+-assign spi_sck    = 1'b0;
+-assign spi_ss     = 8'b0;
+-assign spi_mosi   = 1'b1;
+-assign spi_irq_out= 1'b0;
+-assign in_pslverr = 1'b0;
+-assign in_pready  = in_penable && in_psel && !in_pwrite;
+-assign in_prdata  = data[31:0];
++localparam [13:0] SPI_CTRL_CFG = 14'h2440;
++localparam [13:0] SPI_CTRL_GO  = 14'h2540;
++
++localparam [7:0] XIP_IDLE        = 8'd0;
++localparam [7:0] XIP_WR_TX0      = 8'd1;
++localparam [7:0] XIP_WR_TX1      = 8'd2;
++localparam [7:0] XIP_WR_DIVIDER  = 8'd3;
++localparam [7:0] XIP_WR_SS       = 8'd4;
++localparam [7:0] XIP_WR_CTRL_CFG = 8'd5;
++localparam [7:0] XIP_WR_CTRL_GO  = 8'd6;
++localparam [7:0] XIP_RD_CTRL     = 8'd7;
++localparam [7:0] XIP_RD_RX0      = 8'd8;
++localparam [7:0] XIP_RESP        = 8'd9;
++
++wire is_flash_access = (in_paddr >= flash_addr_start) && (in_paddr <= flash_addr_end);
++
++reg  [7:0]  xip_state;
++reg  [31:0] xip_addr;
++reg  [31:0] xip_rdata;
++reg         xip_pslverr;
++
++wire xip_bus_active = (xip_state != XIP_IDLE) && (xip_state != XIP_RESP);
++wire [23:0] xip_flash_addr = {xip_addr[23:2], 2'b0};
++
++reg  [4:0]  xip_wb_adr;
++reg  [31:0] xip_wb_dat;
++reg  [3:0]  xip_wb_sel;
++reg         xip_wb_we;
++reg         xip_wb_stb;
++reg         xip_wb_cyc;
++
++wire [4:0]  spi_wb_adr = xip_bus_active ? xip_wb_adr : in_paddr[4:0];
++wire [31:0] spi_wb_dat = xip_bus_active ? xip_wb_dat : in_pwdata;
++wire [3:0]  spi_wb_sel = xip_bus_active ? xip_wb_sel : in_pstrb;
++wire        spi_wb_we  = xip_bus_active ? xip_wb_we  : (in_pwrite  && !is_flash_access);
++wire        spi_wb_stb = xip_bus_active ? xip_wb_stb : (in_psel    && !is_flash_access);
++wire        spi_wb_cyc = xip_bus_active ? xip_wb_cyc : (in_penable && !is_flash_access);
++
++wire [31:0] spi_prdata;
++wire        spi_pready;
++wire        spi_pslverr;
++
++function [31:0] bswap32;
++  input [31:0] value;
++  begin
++    bswap32 = {value[7:0], value[15:8], value[23:16], value[31:24]};
++  end
++endfunction
++
++always @(*) begin
++  xip_wb_adr = 5'b0;
++  xip_wb_dat = 32'b0;
++  xip_wb_sel = 4'hf;
++  xip_wb_we  = 1'b0;
++  xip_wb_stb = 1'b0;
++  xip_wb_cyc = 1'b0;
++
++  case (xip_state)
++    XIP_WR_TX0: begin
++      xip_wb_adr = SPI_REG_TX0;
++      xip_wb_dat = 32'b0;
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_WR_TX1: begin
++      xip_wb_adr = SPI_REG_TX1;
++      xip_wb_dat = {8'h03, xip_flash_addr};
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_WR_DIVIDER: begin
++      xip_wb_adr = SPI_REG_DIVIDER;
++      xip_wb_dat = 32'b0;
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_WR_SS: begin
++      xip_wb_adr = SPI_REG_SS;
++      xip_wb_dat = 32'h1;
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_WR_CTRL_CFG: begin
++      xip_wb_adr = SPI_REG_CTRL;
++      xip_wb_dat = {18'b0, SPI_CTRL_CFG};
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_WR_CTRL_GO: begin
++      xip_wb_adr = SPI_REG_CTRL;
++      xip_wb_dat = {18'b0, SPI_CTRL_GO};
++      xip_wb_we  = 1'b1;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_RD_CTRL: begin
++      xip_wb_adr = SPI_REG_CTRL;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    XIP_RD_RX0: begin
++      xip_wb_adr = SPI_REG_TX0;
++      xip_wb_stb = 1'b1;
++      xip_wb_cyc = 1'b1;
++    end
++    default: begin
++    end
++  endcase
++end
+ 
+-`else
++always @(posedge clock or posedge reset) begin
++  if (reset) begin
++    xip_state   <= XIP_IDLE;
++    xip_addr    <= 32'b0;
++    xip_rdata   <= 32'b0;
++    xip_pslverr <= 1'b0;
++  end else begin
++    case (xip_state)
++      XIP_IDLE: begin
++        if (in_psel && !in_penable && is_flash_access) begin
++          xip_addr    <= in_paddr;
++          xip_rdata   <= 32'b0;
++          xip_pslverr <= 1'b0;
++          if (in_pwrite) begin
++            xip_pslverr <= 1'b1;
++            xip_state   <= XIP_RESP;
++            $fwrite(32'h80000002, "flash XIP write is not supported: addr=0x%08x data=0x%08x\n", in_paddr, in_pwdata);
++          end else begin
++            xip_state <= XIP_WR_TX0;
++          end
++        end
++      end
++      XIP_WR_TX0: begin
++        if (spi_pready) xip_state <= XIP_WR_TX1;
++      end
++      XIP_WR_TX1: begin
++        if (spi_pready) xip_state <= XIP_WR_DIVIDER;
++      end
++      XIP_WR_DIVIDER: begin
++        if (spi_pready) xip_state <= XIP_WR_SS;
++      end
++      XIP_WR_SS: begin
++        if (spi_pready) xip_state <= XIP_WR_CTRL_CFG;
++      end
++      XIP_WR_CTRL_CFG: begin
++        if (spi_pready) xip_state <= XIP_WR_CTRL_GO;
++      end
++      XIP_WR_CTRL_GO: begin
++        if (spi_pready) xip_state <= XIP_RD_CTRL;
++      end
++      XIP_RD_CTRL: begin
++        if (spi_pready && !spi_prdata[8]) xip_state <= XIP_RD_RX0;
++      end
++      XIP_RD_RX0: begin
++        if (spi_pready) begin
++          xip_rdata <= bswap32(spi_prdata);
++          xip_state <= XIP_RESP;
++        end
++      end
++      XIP_RESP: begin
++        if (!(in_psel && in_penable && is_flash_access)) begin
++          xip_state <= XIP_IDLE;
++        end
++      end
++      default: begin
++        xip_state <= XIP_IDLE;
++      end
++    endcase
++  end
++end
+ 
+ spi_top u0_spi_top (
+   .wb_clk_i(clock),
+   .wb_rst_i(reset),
+-  .wb_adr_i(in_paddr[4:0]),
+-  .wb_dat_i(in_pwdata),
+-  .wb_dat_o(in_prdata),
+-  .wb_sel_i(in_pstrb),
+-  .wb_we_i (in_pwrite),
+-  .wb_stb_i(in_psel),
+-  .wb_cyc_i(in_penable),
+-  .wb_ack_o(in_pready),
+-  .wb_err_o(in_pslverr),
++  .wb_adr_i(spi_wb_adr),
++  .wb_dat_i(spi_wb_dat),
++  .wb_dat_o(spi_prdata),
++  .wb_sel_i(spi_wb_sel),
++  .wb_we_i (spi_wb_we),
++  .wb_stb_i(spi_wb_stb),
++  .wb_cyc_i(spi_wb_cyc),
++  .wb_ack_o(spi_pready),
++  .wb_err_o(spi_pslverr),
+   .wb_int_o(spi_irq_out),
+ 
+   .ss_pad_o(spi_ss),
+@@ -68,6 +225,8 @@ spi_top u0_spi_top (
+   .miso_pad_i(spi_miso)
+ );
+ 
+-`endif // FAST_FLASH
++assign in_pready  = is_flash_access ? (xip_state == XIP_RESP && in_psel && in_penable) : spi_pready;
++assign in_prdata  = is_flash_access ? xip_rdata : spi_prdata;
++assign in_pslverr = is_flash_access ? (xip_state == XIP_RESP && xip_pslverr) : spi_pslverr;
+ 
+ endmodule
+diff --git a/perip/uart16550/rtl/uart_top_apb.v b/perip/uart16550/rtl/uart_top_apb.v
+index cd327a03..93651b90 100644
+--- a/perip/uart16550/rtl/uart_top_apb.v
++++ b/perip/uart16550/rtl/uart_top_apb.v
+@@ -53,8 +53,12 @@ module uart_top_apb (
+              `endif
+              endcase
+    end
+-   always @ (posedge clock) begin
+-     reg_dat8_w_reg <= reg_dat8_w;
++   always @ (posedge clock or posedge reset) begin
++     if (reset) begin
++       reg_dat8_w_reg <= 8'h00;
++     end else begin
++       reg_dat8_w_reg <= reg_dat8_w;
++     end
+    end
+    //--------------------------------------------------------
+    // Registers
+-- 
+2.34.1
+
