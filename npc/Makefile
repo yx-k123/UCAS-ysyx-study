@@ -16,13 +16,22 @@ FLASH_BASE := 0x30000000
 
 NPC_VSRC := vsrc/ysyx_26060188.v
 NPC_IVERILOG_VSRC := $(NPC_VSRC) vsrc/ysyx_26060188_icarus_mem.v vsrc/ysyx_26060188_icarus_tb.v
+NPC_NETLIST_DESIGN := ysyx_26060188
+NPC_NETLIST_CLK_FREQ_MHZ ?= 100
+NPC_NETLIST_OUT_ROOT := $(abspath ../yosys-sta/result-npc-26060188-nangate45)
+NPC_NETLIST_RESULT_DIR := $(NPC_NETLIST_OUT_ROOT)/$(NPC_NETLIST_DESIGN)-$(NPC_NETLIST_CLK_FREQ_MHZ)MHz
+NPC_NETLIST_SIM_V := $(NPC_NETLIST_RESULT_DIR)/$(NPC_NETLIST_DESIGN).netlist.v.sim
+NPC_NETLIST_CELL_V := ../yosys-sta/pdk/nangate45/sim/cells.v
+NPC_IVERILOG_NETLIST_VSRC := $(NPC_NETLIST_CELL_V) $(NPC_NETLIST_SIM_V) vsrc/ysyx_26060188_icarus_mem.v vsrc/ysyx_26060188_icarus_tb.v
 YSYXSOC_VSRC := ../ysyxSoC/build/ysyxSoCFull.v $(shell find ../ysyxSoC/perip -type f -name '*.v' | sort)
 CSRCS := csrc/main.cpp
 IVERILOG_BUILD_DIR := $(BUILD_DIR)/iverilog
 IVERILOG_SIM := $(IVERILOG_BUILD_DIR)/npc-icarus.vvp
+IVERILOG_NETLIST_SIM := $(IVERILOG_BUILD_DIR)/npc-icarus-netlist.vvp
 IMG ?=
 MAX_CYCLES ?= 5000000
 TIMEOUT_OK ?= 0
+WAVE ?= 0
 
 VERILATOR_INCLUDES := \
 	-Ivsrc \
@@ -39,6 +48,10 @@ LINT_FLAGS := \
 IVERILOG_FLAGS := \
 	-g2012 \
 	-s ysyx_26060188_icarus_tb
+
+IVERILOG_NETLIST_FLAGS := \
+	$(IVERILOG_FLAGS) \
+	-DNETLIST_SIM
 
 VERILATOR_FLAGS := \
 	--cc \
@@ -66,6 +79,23 @@ iverilog:
 iverilog-run: iverilog
 	@if [ -z "$(IMG)" ]; then echo "IMG is required, e.g. make -C npc iverilog-run IMG=/abs/path/to/image.hex"; exit 1; fi
 	$(VVP) $(IVERILOG_SIM) +image=$(abspath $(IMG)) +max-cycles=$(MAX_CYCLES) +timeout-ok=$(TIMEOUT_OK) +wave=$(WAVE)
+
+netlist-syn:
+	VERILOG_DEFINES=__ICARUS__ $(MAKE) -C ../yosys-sta syn \
+		DESIGN=$(NPC_NETLIST_DESIGN) \
+		PDK=nangate45 \
+		CLK_FREQ_MHZ=$(NPC_NETLIST_CLK_FREQ_MHZ) \
+		CLK_PORT_NAME=clock \
+		O=$(NPC_NETLIST_OUT_ROOT) \
+		RTL_FILES="$(abspath $(NPC_VSRC))"
+
+iverilog-netlist: netlist-syn
+	mkdir -p $(IVERILOG_BUILD_DIR)
+	$(IVERILOG) $(IVERILOG_NETLIST_FLAGS) -o $(IVERILOG_NETLIST_SIM) $(NPC_IVERILOG_NETLIST_VSRC)
+
+iverilog-netlist-run: iverilog-netlist
+	@if [ -z "$(IMG)" ]; then echo "IMG is required, e.g. make -C npc iverilog-netlist-run IMG=/abs/path/to/image.hex"; exit 1; fi
+	$(VVP) $(IVERILOG_NETLIST_SIM) +image=$(abspath $(IMG)) +max-cycles=$(MAX_CYCLES) +timeout-ok=$(TIMEOUT_OK) +wave=$(WAVE)
 
 sim:
 	$(call git_commit, "sim RTL") # DO NOT REMOVE THIS LINE!!!

@@ -50,6 +50,13 @@ run: insert-arg $(HEX_IMAGE)
 	@if ! command -v iverilog >/dev/null 2>&1; then echo "iverilog not found"; exit 1; fi
 	@if ! command -v vvp >/dev/null 2>&1; then echo "vvp not found"; exit 1; fi
 	@$(MAKE) -C "$(NPC_HOME)" iverilog-run IMG="$(abspath $(HEX_IMAGE))" MAX_CYCLES="$(NPC_MAX_CYCLES)" TIMEOUT_OK="$(NPC_TIMEOUT_OK)" WAVE="$(WAVE)"
+else ifeq ($(NPC_SIM),iverilog-netlist)
+run: insert-arg $(HEX_IMAGE)
+	@if [ ! -d "$(NPC_HOME)" ]; then echo "NPC_HOME is invalid: $(NPC_HOME)"; exit 1; fi
+	@if ! command -v iverilog >/dev/null 2>&1; then echo "iverilog not found"; exit 1; fi
+	@if ! command -v vvp >/dev/null 2>&1; then echo "vvp not found"; exit 1; fi
+	@if ! command -v yosys >/dev/null 2>&1; then echo "yosys not found"; exit 1; fi
+	@$(MAKE) -C "$(NPC_HOME)" iverilog-netlist-run IMG="$(abspath $(HEX_IMAGE))" MAX_CYCLES="$(NPC_MAX_CYCLES)" TIMEOUT_OK="$(NPC_TIMEOUT_OK)" WAVE="$(WAVE)"
 else
 run: insert-arg
 	@if [ "$(DIFF)" = "1" ] && [ ! -f "$(DIFF_SO)" ]; then echo "DIFF_SO not found: $(DIFF_SO)"; exit 1; fi

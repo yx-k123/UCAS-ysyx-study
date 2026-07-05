@@ -1670,11 +1670,11 @@ module ysyx_26060188 (
   wire        ifu_axi_wready_unused;
   wire        ifu_axi_bvalid_unused;
   wire [1:0]  ifu_axi_bresp_unused;
-  reg         debug_commit_r;
-  reg [31:0]  debug_pc_r;
-  reg [31:0]  debug_inst_r;
-  reg [31:0]  debug_a0_r;
-  reg         debug_ebreak_r;
+  (* keep *) reg        debug_commit_r;
+  (* keep *) reg [31:0] debug_pc_r;
+  (* keep *) reg [31:0] debug_inst_r;
+  (* keep *) reg [31:0] debug_a0_r;
+  (* keep *) reg        debug_ebreak_r;
   wire        _unused_top_ok = &{1'b0,
                                  pc_ready,
                                  mstatus,
