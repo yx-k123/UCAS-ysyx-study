@@ -24,8 +24,12 @@ uint32_t *cpu_gpr = NULL;
 static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
 static const uint32_t MROM_BASE = 0x20000000u;
+static const uint32_t MROM_SIZE = 0x00001000u;
+static const uint32_t SRAM_BASE = 0x0f000000u;
+static const uint32_t SRAM_SIZE = 0x00002000u;
 static const uint32_t FLASH_BASE = 0x30000000u;
 static uint8_t pmem[MEM_SIZE];
+static uint8_t g_sram_init[SRAM_SIZE];
 static std::vector<uint8_t> g_flash_img;
 static std::vector<uint8_t> g_mrom_img;
 static size_t g_img_size = 0;
@@ -381,6 +385,16 @@ static bool init_difftest(const char *so_file, int port, size_t img_size) {
   ref_difftest_init(port);
   (void)ref_difftest_raise_intr;
   ref_difftest_memcpy(MEM_BASE, pmem, img_size, DIFFTEST_TO_REF);
+  size_t mrom_sync_size = g_mrom_img.size();
+  if (mrom_sync_size > MROM_SIZE) {
+    printf("difftest: mrom image is too large (%zu bytes, limit %u), truncating sync\n",
+           mrom_sync_size, MROM_SIZE);
+    mrom_sync_size = MROM_SIZE;
+  }
+  if (mrom_sync_size > 0) {
+    ref_difftest_memcpy(MROM_BASE, g_mrom_img.data(), mrom_sync_size, DIFFTEST_TO_REF);
+  }
+  ref_difftest_memcpy(SRAM_BASE, g_sram_init, sizeof(g_sram_init), DIFFTEST_TO_REF);
 
   DiffCPUState dut;
   build_dut_state(&dut);
@@ -480,6 +494,7 @@ static bool load_img(const char* img_path) {
   rewind(fp);
 
   memset(pmem, 0, sizeof(pmem));
+  memset(g_sram_init, 0, sizeof(g_sram_init));
   g_flash_img.assign((size_t)size, 0);
   g_mrom_img.assign((size_t)size, 0);
   size_t n = fread(pmem, 1, (size_t)size, fp);
@@ -646,7 +661,12 @@ int main(int argc, char** argv) {
   contextp->timeInc(1);
 
   if (diff_so != NULL) {
-    printf("difftest: disabled during MROM boot stage, ignoring %s\n", diff_so);
+    if (!init_difftest(diff_so, diff_port, g_img_size)) {
+      wave_close(tfp);
+      delete top;
+      delete contextp;
+      return 1;
+    }
   }
 
   int cycle = 0;
