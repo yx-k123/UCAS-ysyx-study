@@ -6,15 +6,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <vector>
 
 #include <svdpi.h>
-#include "Vtop.h"
+#include "VysyxSoCFull.h"
 #include "verilated.h"
 #if VM_TRACE
 #include "verilated_vcd_c.h"
 #endif
 
-#include <capstone/capstone.h>
 #include <elf.h>
 
 #include "../../common/difftest_state.h"
@@ -23,13 +23,17 @@ uint32_t *cpu_gpr = NULL;
 
 static const uint32_t MEM_BASE = 0x80000000u;
 static const uint32_t MEM_SIZE = 0x10000000u;  // 256 MiB
+static const uint32_t MROM_BASE = 0x20000000u;
+static const uint32_t FLASH_BASE = 0x30000000u;
 static const uint32_t UART_ADDR = 0x10000000u;
 static uint8_t pmem[MEM_SIZE];
+static std::vector<uint8_t> g_flash_img;
 static size_t g_img_size = 0;
 static bool g_ebreak_hit = false;
 static uint32_t g_ebreak_pc = 0;
 static uint32_t g_ebreak_inst = 0;
 static uint32_t g_ebreak_a0 = 0;
+static int g_flash_read_log_count = 0;
 
 enum { DIFFTEST_TO_DUT = 0, DIFFTEST_TO_REF = 1 };
 
@@ -53,7 +57,7 @@ static difftest_exec_t ref_difftest_exec = NULL;
 static difftest_raise_intr_t ref_difftest_raise_intr = NULL;
 static difftest_init_t ref_difftest_init = NULL;
 
-Vtop* g_top = NULL;
+VysyxSoCFull* g_top = NULL;
 
 typedef struct {
   char name[128];
@@ -142,9 +146,6 @@ static void print_indent() {
   for (int i = 0; i < call_depth; i++) printf("  ");
 }
 
-static csh handle;
-static bool capstone_initialized = false;
-
 #define ITRACE_BUF_SIZE 16
 typedef struct {
   uint32_t pc;
@@ -189,11 +190,6 @@ static uint32_t caller_pc = 0;
 extern "C" void trace_inst(int pc, int inst) {
   if (!g_trace_enabled) return;
 
-  if (!capstone_initialized) {
-    cs_open(CS_ARCH_RISCV, CS_MODE_RISCV32, &handle);
-    capstone_initialized = true;
-  }
-  
   itrace_record(pc, inst);
 
   if (expecting_call_dest) {
@@ -226,18 +222,7 @@ extern "C" void trace_inst(int pc, int inst) {
          caller_pc = pc;
      }
   }
-
-  cs_insn *insn;
-  uint8_t *code = (uint8_t *)&inst;
-  size_t size = 4;
-  uint64_t address = pc;
-
-  // 使用 Capstone 反汇编一条指令
-  if (cs_disasm(handle, code, size, address, 1, &insn) > 0) {
-    // 打印到环形缓冲区，或直接打印屏幕
-    printf("itrace: 0x%08x: %08x    %s\t%s\n", pc, inst, insn[0].mnemonic, insn[0].op_str);
-    cs_free(insn, 1);
-  }
+  printf("itrace: 0x%08x: %08x\n", pc, inst);
 }
 
 static uint64_t get_time_us() {
@@ -272,6 +257,36 @@ static inline void wave_close(void* tfp) {
 
 extern "C" unsigned long long clint_mtime() {
   return (unsigned long long)get_time_us();
+}
+
+extern "C" void flash_read(int32_t addr, int32_t *data) {
+  uint32_t off = (uint32_t)addr;
+  uint32_t value = 0;
+  for (int i = 0; i < 4; i++) {
+    uint32_t idx = off + (uint32_t)i;
+    uint8_t byte = (idx < g_flash_img.size()) ? g_flash_img[idx] : 0;
+    value |= (uint32_t)byte << (i * 8);
+  }
+  *data = (int32_t)value;
+  if (g_flash_read_log_count < 16) {
+    printf("flash_read[%d]: addr=0x%08x data=0x%08x\n",
+           g_flash_read_log_count, off, value);
+    g_flash_read_log_count++;
+  }
+}
+
+extern "C" void mrom_read(int32_t addr, int32_t *data) {
+  switch ((uint32_t)addr & ~0x3u) {
+    case MROM_BASE + 0x0:
+      *data = (int32_t)0x300002b7;  // lui t0, 0x30000
+      break;
+    case MROM_BASE + 0x4:
+      *data = (int32_t)0x00028067;  // jalr x0, t0, 0
+      break;
+    default:
+      *data = 0x00000013;           // nop
+      break;
+  }
 }
 
 extern "C" void set_gpr_ptr(const svOpenArrayHandle r) {
@@ -475,10 +490,13 @@ static bool load_img(const char* img_path) {
   rewind(fp);
 
   memset(pmem, 0, sizeof(pmem));
+  g_flash_img.assign((size_t)size, 0);
   size_t n = fread(pmem, 1, (size_t)size, fp);
+  rewind(fp);
+  size_t m = fread(g_flash_img.data(), 1, (size_t)size, fp);
   fclose(fp);
-  if (n != (size_t)size) {
-    printf("failed to read full image, got %zu bytes\n", n);
+  if (n != (size_t)size || m != (size_t)size) {
+    printf("failed to read full image, got pmem=%zu flash=%zu bytes\n", n, m);
     return false;
   }
 
@@ -590,8 +608,9 @@ int main(int argc, char** argv) {
   }
 
   VerilatedContext* contextp = new VerilatedContext;
+  Verilated::commandArgs(argc, argv);
   contextp->commandArgs(argc, argv);
-  Vtop* top = new Vtop{contextp};
+  VysyxSoCFull* top = new VysyxSoCFull{contextp};
   g_top = top;
 
   #if VM_TRACE
@@ -616,19 +635,19 @@ int main(int argc, char** argv) {
   }
   #endif
 
-  top->clk = 0;
-  top->rst = 1;
+  top->clock = 0;
+  top->reset = 1;
 
   // Reset for one cycle.
   top->eval();
   wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
-  top->clk = 1;
+  top->clock = 1;
   top->eval();
   wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
-  top->clk = 0;
-  top->rst = 0;
+  top->clock = 0;
+  top->reset = 0;
   top->eval();
   wave_dump(tfp, contextp->time());
   contextp->timeInc(1);
@@ -648,7 +667,7 @@ int main(int argc, char** argv) {
 
     // itrace_record(top->debug_pc, top->debug_inst);
 
-    top->clk = 1;
+    top->clock = 1;
     top->eval();
     wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
@@ -679,7 +698,7 @@ difftest_done:
       ;
     }
 
-    top->clk = 0;
+    top->clock = 0;
     top->eval();
     wave_dump(tfp, contextp->time());
     contextp->timeInc(1);
