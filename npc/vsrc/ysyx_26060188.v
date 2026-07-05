@@ -69,6 +69,9 @@ module ysyx_26060188 (
   import "DPI-C" function void npc_ebreak(input int unsigned pc, input int unsigned inst, input int unsigned a0);
   import "DPI-C" function void trace_inst(input int pc, input int inst);
 
+  localparam [31:0] UART_ADDR_BASE = 32'h1000_0000;
+  localparam [31:0] UART_ADDR_MASK = 32'hffff_f000;
+
   wire _unused_ok = &{1'b0,
                       io_interrupt,
                       io_slave_awvalid,
@@ -223,6 +226,8 @@ module ysyx_26060188 (
   wire       data_hazard = if_valid && last_wb_valid_r &&
                            ((hazard_use_rs1 && (hazard_rs1_idx != 5'd0) && (hazard_rs1_idx == last_wb_rd_r)) ||
                             (hazard_use_rs2 && (hazard_rs2_idx != 5'd0) && (hazard_rs2_idx == last_wb_rd_r)));
+  wire       master_uart_aw = (io_master_awaddr & UART_ADDR_MASK) == UART_ADDR_BASE;
+  wire       master_uart_ar = (io_master_araddr & UART_ADDR_MASK) == UART_ADDR_BASE;
 
   assign pc_valid = ~reset;
   assign wb_fire = mem_valid && mem_ready;
@@ -503,12 +508,12 @@ module ysyx_26060188 (
 
   assign io_master_awid = 4'd1;
   assign io_master_awlen = 8'd0;
-  assign io_master_awsize = 3'b010;
+  assign io_master_awsize = master_uart_aw ? 3'b000 : 3'b010;
   assign io_master_awburst = 2'b01;
   assign io_master_wlast = 1'b1;
   assign io_master_arid = 4'd0;
   assign io_master_arlen = 8'd0;
-  assign io_master_arsize = 3'b010;
+  assign io_master_arsize = master_uart_ar ? 3'b000 : 3'b010;
   assign io_master_arburst = 2'b01;
 
   assign io_slave_awready = 1'b0;

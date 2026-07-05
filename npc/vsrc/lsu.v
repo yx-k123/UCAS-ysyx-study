@@ -39,6 +39,8 @@ module lsu (
 
   localparam [4:0] VALID_FIXED_DELAY = 5'd0;
   localparam       VALID_USE_LFSR = 1'b1;
+  localparam [31:0] UART_ADDR_BASE = 32'h1000_0000;
+  localparam [31:0] UART_ADDR_MASK = 32'hffff_f000;
 
   wire is_load_i = ex_bus_i[`EXU_WBU_IS_LOAD];
   wire is_store_i = ex_bus_i[`EXU_WBU_IS_STORE];
@@ -49,10 +51,14 @@ module lsu (
   wire [1:0] byte_off = addr_i[1:0];
   wire valid = is_load_i || is_store_i;
   wire [31:0] aligned_addr = {addr_i[31:2], 2'b00};
+  // UART16550 uses byte-addressed registers, so its low address bits must be
+  // preserved on the external bus instead of being word-aligned away.
+  wire        is_uart_mmio = (addr_i & UART_ADDR_MASK) == UART_ADDR_BASE;
+  wire [31:0] bus_addr = is_uart_mmio ? addr_i : aligned_addr;
 
   reg [`EXU_WBU_BUS_W-1:0] ex_bus_r;
   reg [31:0] dmem_rdata_r;
-  reg [31:0] aligned_addr_r;
+  reg [31:0] bus_addr_r;
   reg [1:0]  byte_off_r;
   reg [31:0] dmem_wdata_r;
   reg [3:0]  dmem_wmask_r;
@@ -135,7 +141,7 @@ module lsu (
     if (rst) begin
       ex_bus_r <= {`EXU_WBU_BUS_W{1'b0}};
       dmem_rdata_r <= 32'b0;
-      aligned_addr_r <= 32'b0;
+      bus_addr_r <= 32'b0;
       byte_off_r <= 2'b0;
       dmem_wdata_r <= 32'b0;
       dmem_wmask_r <= 4'b0;
@@ -155,7 +161,7 @@ module lsu (
           w_done_r <= 1'b0;
           if (ex_valid_i && valid) begin
             ex_bus_r <= ex_bus_i;
-            aligned_addr_r <= aligned_addr;
+            bus_addr_r <= bus_addr;
             byte_off_r <= byte_off;
             dmem_wdata_r <= dmem_wdata;
             dmem_wmask_r <= dmem_wmask;
@@ -209,13 +215,13 @@ module lsu (
     end
   end
 
-  assign axi_awaddr_o = aligned_addr_r;
+  assign axi_awaddr_o = bus_addr_r;
   assign axi_awvalid_o = (state_r == ST_WR_REQ) && req_done && !aw_done_r;
   assign axi_wdata_o = dmem_wdata_r;
   assign axi_wstrb_o = dmem_wmask_r;
   assign axi_wvalid_o = (state_r == ST_WR_REQ) && req_done && !w_done_r;
   assign axi_bready_o = (state_r == ST_WR_RESP);
-  assign axi_araddr_o = aligned_addr_r;
+  assign axi_araddr_o = bus_addr_r;
   assign axi_arvalid_o = (state_r == ST_RD_REQ) && req_done;
   assign axi_rready_o = (state_r == ST_RD_RESP);
 
